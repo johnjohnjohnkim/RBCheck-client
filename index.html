@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RBCheck | Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/api.js"></script>
+</head>
+<body>
+
+  <aside class="sidebar">
+    <div class="logo">
+      <span class="logo-icon">$</span>
+      <span class="logo-text">RBCheck</span>
+    </div>
+    <nav>
+      <a href="#" class="nav-item active">
+        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        Home
+      </a>
+      <a href="transactions.html" class="nav-item">
+        <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z"/></svg>
+        Transactions
+      </a>
+      <a href="#" class="nav-item">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        Merchants
+      </a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+
+    <header class="top-bar">
+      <h1 class="page-title">Home</h1>
+      <div class="header-actions">
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <input id="merchant-search" type="text" placeholder="Search merchant..." />
+        </div>
+        <button class="btn-secondary" id="clear-filters">Clear Filters</button>
+        <button class="btn-primary" id="add-tx-btn">+ Add Transaction</button>
+      </div>
+    </header>
+
+    <section class="summary-section">
+      <div class="card card--hero">
+        <span class="card-label">Today's Spendings</span>
+        <span class="card-value card-value--hero" id="stat-daily">$0.00</span>
+        <span class="card-sub" id="stat-daily-sub"></span>
+      </div>
+      <div class="summary-side">
+        <div class="card">
+          <span class="card-label">This Month</span>
+          <span class="card-value" id="stat-month">$0.00</span>
+          <span class="card-sub" id="stat-month-label">June 2026</span>
+        </div>
+        <div class="card card--clickable" id="card-week">
+          <span class="card-label" id="stat-week-title">Spent This Week</span>
+          <span class="card-value" id="stat-week">$0.00</span>
+          <span class="card-sub" id="stat-week-label">Monday - Sunday</span>
+        </div>
+      </div>
+    </section>
+
+    
+    <section class="charts-row">
+      <div class="chart-card chart-card--wide">
+        <div class="chart-header">
+          <h2>Spending Over Time</h2>
+          <span class="chart-subtitle" id="chart-range-label">All time</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="spending-chart"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2>By Merchant</h2>
+        </div>
+        <div class="chart-container">
+          <canvas id="merchant-chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+        <section class="filters-bar">
+      <div class="filter-group">
+        <label for="date-from">From</label>
+        <input type="date" id="date-from" />
+      </div>
+      <div class="filter-group">
+        <label for="date-to">To</label>
+        <input type="date" id="date-to" />
+      </div>
+      <div class="filter-group">
+        <label for="group-by">Group By</label>
+        <select id="group-by">
+          <option value="month">Month</option>
+          <option value="week">Week</option>
+          <option value="day">Day</option>
+        </select>
+      </div>
+      <button class="btn-secondary" id="apply-filters">Apply</button>
+    </section>
+
+    <section class="table-section">
+      <div class="table-header">
+        <div>
+          <h2>Today's Transactions</h2>
+          <span class="table-date-label" id="today-date-label"></span>
+        </div>
+        <span class="today-total" id="today-tx-total"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="tx-table">
+          <thead>
+            <tr>
+              <th>Merchant</th>
+              <th>Category</th>
+              <th class="col-amount">Amount</th>
+            </tr>
+          </thead>
+          <tbody id="tx-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Transaction</h2>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <form id="add-tx-form">
+        <div class="form-group">
+          <label for="tx-date">Date</label>
+          <input type="date" id="tx-date" required />
+        </div>
+        <div class="form-group">
+          <label for="tx-merchant">Merchant</label>
+          <input type="text" id="tx-merchant" placeholder="e.g. Whole Foods" required />
+        </div>
+        <div class="form-group">
+          <label for="tx-category">Category</label>
+          <select id="tx-category">
+            <option>Groceries</option>
+            <option>Dining</option>
+            <option>Shopping</option>
+            <option>Gas</option>
+            <option>Streaming</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="tx-amount">Amount ($)</label>
+          <input type="number" id="tx-amount" step="0.01" min="0.01" placeholder="0.00" required />
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+          <button type="submit" class="btn-primary">Add Transaction</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

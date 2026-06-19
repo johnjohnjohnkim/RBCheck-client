@@ -1,6 +1,8 @@
 // All network calls to the backend live here.
 // Every function is async — it returns a Promise, so callers must await it.
-const BASE_URL = 'http://localhost:8000'
+const BASE_URL = 'http://johns-macbook-pro.tailcdfc4f.ts.net:8000'
+var offset = 0;
+var limit = 50;
 
 /**
  * Fetches a high-level summary of all transactions from the server.
@@ -23,10 +25,16 @@ async function getSummary() {
  * Throws an error if the server responds with a non-2xx status,
  * so the caller can catch it and show an error instead of silently returning garbage.
  */
-async function searchTransactions() {
+async function getTransactions() {
   // const query = new URLSearchParams(params).toString()
   // const r = await fetch(`${BASE_URL}/transactions?${query}`)
   const r = await fetch(`${BASE_URL}/transactions/month`)
+  if (!r.ok) throw new Error(`Server error: %{r.status}`);
+  return r.json();
+}
+
+async function allTransactions(){
+  const r = await fetch(`${BASE_URL}/transactions/?offset=${offset}&limit=${limit}`)
   if (!r.ok) throw new Error(`Server error: %{r.status}`);
   return r.json();
 }

@@ -1,6 +1,6 @@
 // All network calls to the backend live here.
 // Every function is async — it returns a Promise, so callers must await it.
-const BASE_URL = 'https://www.rbcheckdemo.gwanwoo.dev'
+const BASE_URL = 'https://api.rbcheckdemo.gwanwoo.dev'
 var offset = 0;
 var limit = 50;
 

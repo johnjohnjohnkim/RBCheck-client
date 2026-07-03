@@ -1,7 +1,7 @@
 // API layer for the alternative frontend (index-alt.html).
 // Covers every endpoint the backend exposes. All functions return Promises.
 const API = (() => {
-  const BASE = 'https://www.rbcheckdemo.gwanwoo.dev';
+  const BASE = 'https://api.rbcheckdemo.gwanwoo.dev';
 
   async function get(path) {
     const r = await fetch(BASE + path);

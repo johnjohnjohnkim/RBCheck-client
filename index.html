@@ -3,175 +3,223 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RBCheck | Home</title>
+  <title>RBCheck | The Daily Ledger</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles-alt.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/api.js"></script>
 </head>
 <body>
+<div class="sheet">
 
-  <aside class="sidebar">
-    <div class="logo">
-      <span class="logo-icon">$</span>
-      <span class="logo-text">RBCheck</span>
+  <!-- ── Masthead ─────────────────────────────────────────── -->
+  <header class="masthead">
+    <div class="masthead-top">
+      <span class="masthead-kicker">Vol. I — A Personal Ledger</span>
+      <span id="masthead-date"></span>
+      <button id="theme-toggle" class="theme-btn" title="Toggle light / dark">☾</button>
     </div>
-    <nav>
-      <a href="#" class="nav-item active">
-        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-        Home
-      </a>
-      <a href="transactions.html" class="nav-item">
-        <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z"/></svg>
-        Transactions
-      </a>
-      <a href="#" class="nav-item">
-        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-        Merchants
-      </a>
-    </nav>
-  </aside>
+    <h1 class="masthead-title">RBCheck</h1>
+    <p class="masthead-sub">❦&nbsp; every dollar, parsed from a text message, accounted for &nbsp;❦</p>
+  </header>
 
-  <main class="main-content">
-
-    <header class="top-bar">
-      <h1 class="page-title">Home</h1>
-      <div class="header-actions">
-        <div class="search-wrap">
-          <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-          <input id="merchant-search" type="text" placeholder="Search merchant..." />
-        </div>
-        <button class="btn-secondary" id="clear-filters">Clear Filters</button>
-        <button class="btn-primary" id="add-tx-btn">+ Add Transaction</button>
-      </div>
-    </header>
-
-    <section class="summary-section">
-      <div class="card card--hero">
-        <span class="card-label">Today's Spendings</span>
-        <span class="card-value card-value--hero" id="stat-daily">$0.00</span>
-        <span class="card-sub" id="stat-daily-sub"></span>
-      </div>
-      <div class="summary-side">
-        <div class="card">
-          <span class="card-label">This Month</span>
-          <span class="card-value" id="stat-month">$0.00</span>
-          <span class="card-sub" id="stat-month-label">June 2026</span>
-        </div>
-        <div class="card card--clickable" id="card-week">
-          <span class="card-label" id="stat-week-title">Spent This Week</span>
-          <span class="card-value" id="stat-week">$0.00</span>
-          <span class="card-sub" id="stat-week-label">Monday - Sunday</span>
-        </div>
-      </div>
-    </section>
-
-    
-    <section class="charts-row">
-      <div class="chart-card chart-card--wide">
-        <div class="chart-header">
-          <h2>Spending Over Time</h2>
-          <span class="chart-subtitle" id="chart-range-label">All time</span>
-        </div>
-        <div class="chart-container">
-          <canvas id="spending-chart"></canvas>
-        </div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-header">
-          <h2>By Merchant</h2>
-        </div>
-        <div class="chart-container">
-          <canvas id="merchant-chart"></canvas>
-        </div>
-      </div>
-    </section>
-
-        <section class="filters-bar">
-      <div class="filter-group">
-        <label for="date-from">From</label>
-        <input type="date" id="date-from" />
-      </div>
-      <div class="filter-group">
-        <label for="date-to">To</label>
-        <input type="date" id="date-to" />
-      </div>
-      <div class="filter-group">
-        <label for="group-by">Group By</label>
-        <select id="group-by">
-          <option value="month">Month</option>
-          <option value="week">Week</option>
-          <option value="day">Day</option>
-        </select>
-      </div>
-      <button class="btn-secondary" id="apply-filters">Apply</button>
-    </section>
-
-    <section class="table-section">
-      <div class="table-header">
-        <div>
-          <h2>Today's Transactions</h2>
-          <span class="table-date-label" id="today-date-label"></span>
-        </div>
-        <span class="today-total" id="today-tx-total"></span>
-      </div>
-      <div class="table-wrap">
-        <table id="tx-table">
-          <thead>
-            <tr>
-              <th>Merchant</th>
-              <th>Category</th>
-              <th class="col-amount">Amount</th>
-            </tr>
-          </thead>
-          <tbody id="tx-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-  </main>
-
-  <div class="modal-overlay" id="modal-overlay">
-    <div class="modal">
-      <div class="modal-header">
-        <h2>Add Transaction</h2>
-        <button class="modal-close" id="modal-close">&times;</button>
-      </div>
-      <form id="add-tx-form">
-        <div class="form-group">
-          <label for="tx-date">Date</label>
-          <input type="date" id="tx-date" required />
-        </div>
-        <div class="form-group">
-          <label for="tx-merchant">Merchant</label>
-          <input type="text" id="tx-merchant" placeholder="e.g. Whole Foods" required />
-        </div>
-        <div class="form-group">
-          <label for="tx-category">Category</label>
-          <select id="tx-category">
-            <option>Groceries</option>
-            <option>Dining</option>
-            <option>Shopping</option>
-            <option>Gas</option>
-            <option>Streaming</option>
-            <option>Other</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="tx-amount">Amount ($)</label>
-          <input type="number" id="tx-amount" step="0.01" min="0.01" placeholder="0.00" required />
-        </div>
-        <div class="form-actions">
-          <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
-          <button type="submit" class="btn-primary">Add Transaction</button>
-        </div>
-      </form>
-    </div>
+  <!-- ── Ticker ───────────────────────────────────────────── -->
+  <div class="ticker">
+    <button class="tick" data-preset="today">
+      <span class="tick-label">Today</span><span class="tick-val" id="tick-today">—</span>
+    </button>
+    <span class="tick-sep">❧</span>
+    <button class="tick" data-preset="week">
+      <span class="tick-label">This Week</span><span class="tick-val" id="tick-week">—</span>
+    </button>
+    <span class="tick-sep">❧</span>
+    <button class="tick" data-preset="past7">
+      <span class="tick-label">Rolling 7 Days</span><span class="tick-val" id="tick-rolling">—</span>
+    </button>
+    <span class="tick-sep">❧</span>
+    <button class="tick" data-preset="month">
+      <span class="tick-label">This Month</span><span class="tick-val" id="tick-month">—</span>
+    </button>
   </div>
 
-  <script src="js/app.js"></script>
+  <!-- ── Hero ─────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="hero-left">
+      <span class="overline">Spent Today</span>
+      <div class="hero-amount" id="hero-amount">$0.00</div>
+      <div class="hero-meta">
+        <span id="hero-date"></span>
+        <span id="hero-delta" class="delta"></span>
+      </div>
+    </div>
+    <div class="hero-right">
+      <span class="overline">Past Seven Days</span>
+      <div class="spark-box"><canvas id="spark"></canvas></div>
+      <span class="spark-caption" id="spark-caption"></span>
+    </div>
+  </section>
+
+  <!-- ── Quick entry ──────────────────────────────────────── -->
+  <section class="quickadd">
+    <label class="overline" for="qa-input">Quick Entry — write it like a text message</label>
+    <div class="qa-row">
+      <input id="qa-input" autocomplete="off" spellcheck="false"
+             placeholder='try “coffee at Coffee Lunar at $6.75 yesterday” and press Enter' />
+      <button id="qa-submit" class="btn-ink" disabled>Add to Ledger</button>
+    </div>
+    <div class="qa-preview" id="qa-preview" hidden></div>
+  </section>
+
+  <!-- ── Insights ─────────────────────────────────────────── -->
+  <section class="insights">
+    <div class="ins">
+      <span class="ins-num" id="ins-avg">—</span>
+      <span class="ins-label">Daily Average</span>
+      <span class="ins-sub">this month</span>
+    </div>
+    <div class="ins">
+      <span class="ins-num" id="ins-peak">—</span>
+      <span class="ins-label">Biggest Day</span>
+      <span class="ins-sub" id="ins-peak-sub"></span>
+    </div>
+    <div class="ins">
+      <span class="ins-num ins-num--text" id="ins-top">—</span>
+      <span class="ins-label">Top Merchant</span>
+      <span class="ins-sub" id="ins-top-sub"></span>
+    </div>
+    <div class="ins">
+      <span class="ins-num" id="ins-count">—</span>
+      <span class="ins-label">Entries</span>
+      <span class="ins-sub">this month</span>
+    </div>
+  </section>
+
+  <!-- ── Chart + heatmap + leaderboard ────────────────────── -->
+  <section class="columns">
+    <div class="panel">
+      <h2 class="rule-head">Spending Over Time <span class="note" id="chart-note"></span></h2>
+      <div class="chart-box"><canvas id="main-chart"></canvas></div>
+    </div>
+    <div class="panel-stack">
+      <div class="panel">
+        <h2 class="rule-head" id="heatmap-title">This Month</h2>
+        <div id="heatmap" class="heatmap"></div>
+      </div>
+      <div class="panel">
+        <h2 class="rule-head">Top Merchants</h2>
+        <div id="leaderboard" class="leaderboard"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── The Ledger ───────────────────────────────────────── -->
+  <section class="ledger" id="ledger">
+    <div class="ledger-head">
+      <div>
+        <h2 class="ledger-title">The Ledger</h2>
+        <span class="ledger-label" id="ledger-label"></span>
+      </div>
+      <span class="ledger-count" id="ledger-count"></span>
+    </div>
+
+    <div class="ledger-controls">
+      <div class="seg" id="presets">
+        <button data-preset="today">Today</button>
+        <button data-preset="week">Week</button>
+        <button data-preset="past7">7 Days</button>
+        <button data-preset="month" class="active">Month</button>
+        <button data-preset="all">All</button>
+      </div>
+      <input id="ledger-search" autocomplete="off" placeholder="Search merchant — press /" />
+      <button class="btn-ghost" id="export-csv">Export CSV</button>
+    </div>
+
+    <div class="ledger-controls ledger-controls--sub">
+      <div class="ctl">
+        <label>Amount</label>
+        <input id="price-min" type="number" placeholder="min" min="0" step="0.01" />
+        <span class="dash">–</span>
+        <input id="price-max" type="number" placeholder="max" min="0" step="0.01" />
+        <button class="btn-ghost btn-sm" id="price-apply">Go</button>
+      </div>
+      <div class="ctl">
+        <label>Dates</label>
+        <input id="range-from" type="date" />
+        <span class="dash">–</span>
+        <input id="range-to" type="date" />
+        <button class="btn-ghost btn-sm" id="range-apply">Go</button>
+      </div>
+      <div class="pager" id="pager" hidden>
+        <button id="pg-prev" class="btn-ghost btn-sm">&#8249; Prev</button>
+        <span id="pg-label"></span>
+        <button id="pg-next" class="btn-ghost btn-sm">Next &#8250;</button>
+      </div>
+    </div>
+
+    <table class="ledger-table">
+      <thead>
+        <tr>
+          <th class="w-time">Time</th>
+          <th>Merchant</th>
+          <th>Type</th>
+          <th class="col-amt">Amount</th>
+        </tr>
+      </thead>
+      <tbody id="ledger-body"></tbody>
+    </table>
+  </section>
+
+  <footer class="colophon">
+    — RBCheck · set in Libre Caslon Text · press <kbd>n</kbd> for a new entry, <kbd>/</kbd> to search —
+  </footer>
+
+</div>
+
+<!-- ── Edit modal ─────────────────────────────────────────── -->
+<div class="overlay" id="ed-overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="ed-title">Edit Entry</h3>
+      <button id="ed-close" title="Close">&times;</button>
+    </div>
+    <form id="ed-form">
+      <div class="frow">
+        <div class="fg">
+          <label for="ed-date">Date</label>
+          <input type="date" id="ed-date" required />
+        </div>
+        <div class="fg">
+          <label for="ed-time">Time</label>
+          <input type="time" id="ed-time" />
+        </div>
+      </div>
+      <div class="fg">
+        <label for="ed-place">Merchant</label>
+        <input type="text" id="ed-place" required />
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label for="ed-amount">Amount ($)</label>
+          <input type="number" id="ed-amount" step="0.01" min="0.01" required />
+        </div>
+        <div class="fg">
+          <label for="ed-type">Type</label>
+          <input type="text" id="ed-type" list="type-options" />
+          <datalist id="type-options"></datalist>
+        </div>
+      </div>
+      <div class="factions">
+        <button type="button" class="btn-ghost" id="ed-cancel">Cancel</button>
+        <button type="submit" class="btn-ink">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="js/api-alt.js"></script>
+<script src="js/app-alt.js"></script>
 </body>
 </html>

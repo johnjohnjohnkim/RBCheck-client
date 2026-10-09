@@ -22,6 +22,17 @@ See the [RBCheck README](../RBCheck/README.md) for the endpoints these files cal
 
 Manual entries made with Quick Entry are sent without an id; the server assigns one.
 
+## Unlocking
+
+The API needs a token, so the page opens locked and loads nothing until one is accepted. Paste either of the API's tokens into the unlock screen:
+
+- the **read** token shows the whole ledger, with Quick Entry and editing switched off (the badge in the masthead says *Read-only*);
+- the **write** token also allows adding and editing (*Full access*).
+
+The token is kept in this browser's `localStorage` (or just in memory if storage is blocked), sent only in an `Authorization` header and never in the URL. A wrong or changed token is forgotten and the prompt returns. **Lock** in the masthead forgets it on this device. Use the read token on devices you don't fully trust; the write token is the one your Mac poller holds.
+
+Local development also needs the API to allow this page's origin: add `http://127.0.0.1:3000` to the API's `CORS_ORIGINS`. (The demo server already does, and prints its public demo read token.)
+
 ## Project structure
 
 ```
@@ -30,9 +41,10 @@ RBCheck-client/
 ├── css/styles.css
 └── js/
     ├── config.js   API base URL
-    ├── api.js      API client (error messages come from the server's `detail`)
+    ├── auth.js     Token storage and helpers (pure, unit tested)
+    ├── api.js      API client (sends the token; 401 clears it and re-prompts; 403 means read-only)
     ├── insights.js Digest rendering helpers (pure functions, unit tested)
-    └── app.js      Rendering and state
+    └── app.js      Rendering, state and the unlock flow
 ```
 
 ## Running locally
@@ -41,7 +53,7 @@ RBCheck-client/
 python -m http.server 3000
 ```
 
-Then visit `http://127.0.0.1:3000/index.html`. The RBCheck backend's CORS policy allows `localhost`/`127.0.0.1` on any port.
+Then visit `http://127.0.0.1:3000/index.html`.
 
 ## Trying it without real data
 
@@ -49,11 +61,13 @@ The RBCheck backend can serve made-up spending from an in-memory database, with 
 
 ```bash
 # in the RBCheck repo
-python -m app.scripts.demo_server        # http://127.0.0.1:8000
+python -m app.scripts.demo_server        # http://127.0.0.1:8000, prints its demo read token
 # in this repo
 python -m http.server 3000
-# then open http://127.0.0.1:3000/index.html?api=http://127.0.0.1:8000
+# then open http://127.0.0.1:3000/index.html?api=http://127.0.0.1:8000 and paste the demo read token
 ```
+
+The demo tokens are public fixed values (`demo-read-token-for-local-use-only`, `demo-write-token-for-local-use-only`) that protect nothing real.
 
 ## Tests
 
@@ -61,4 +75,4 @@ python -m http.server 3000
 node --test
 ```
 
-Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js`: money and date formatting, empty and partial digests, HTML escaping and the history bars.
+Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js` (formatting, empty and partial digests, HTML escaping, history bars), the token helpers in `js/auth.js`, and the real `js/api.js` against a scripted `fetch` (the token goes in a header and never the URL, a 401 clears it and triggers the prompt, a 403 keeps it, network failures are not mistaken for auth failures).

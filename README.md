@@ -6,7 +6,7 @@ There is no package manager, bundler, or dev server in this repo. It is plain HT
 
 ## The Daily Ledger
 
-`index.html` is a single-page, newspaper-styled dashboard: masthead, spend ticker, a hero stat with a 7-day sparkline, a quick-entry box, an insights row, a spending chart, a month heatmap, a merchant leaderboard, and a full ledger table with search, amount and date filters, paging, CSV export and an edit modal.
+`index.html` is a single-page, newspaper-styled dashboard: masthead, spend ticker, a hero stat with a 7-day sparkline, a quick-entry box, an insights row, a **Daily Digest** (today's spend against your previous 7-day average, where it went, unusual charges, month-end pace, plus a list of past days you can tap to open in the ledger), a spending chart, a month heatmap, a merchant leaderboard, and a full ledger table with search, amount and date filters, paging, CSV export and an edit modal.
 
 ## Backend
 
@@ -31,6 +31,7 @@ RBCheck-client/
 └── js/
     ├── config.js   API base URL
     ├── api.js      API client (error messages come from the server's `detail`)
+    ├── insights.js Digest rendering helpers (pure functions, unit tested)
     └── app.js      Rendering and state
 ```
 
@@ -42,6 +43,22 @@ python -m http.server 3000
 
 Then visit `http://127.0.0.1:3000/index.html`. The RBCheck backend's CORS policy allows `localhost`/`127.0.0.1` on any port.
 
+## Trying it without real data
+
+The RBCheck backend can serve made-up spending from an in-memory database, with no Postgres:
+
+```bash
+# in the RBCheck repo
+python -m app.scripts.demo_server        # http://127.0.0.1:8000
+# in this repo
+python -m http.server 3000
+# then open http://127.0.0.1:3000/index.html?api=http://127.0.0.1:8000
+```
+
 ## Tests
 
-No test suite is present in this repository.
+```bash
+node --test
+```
+
+Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js`: money and date formatting, empty and partial digests, HTML escaping and the history bars.

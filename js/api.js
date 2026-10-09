@@ -43,6 +43,8 @@ const API = (() => {
     merchant:   (m)             => get(`/transactions/merchant?merchant=${encodeURIComponent(m)}`),
     priceRange: (min, max)      => get(`/transactions/price_range?range_start=${min}&range_end=${max}`),
     one:        (id)            => get(`/transactions/${id}`),
+    insightsToday:   ()         => get('/insights/today'),
+    insightsHistory: (days)     => get(`/insights/history?days=${days}`),
     create:     (data)          => send('/transactions', 'POST', data),
     update:     (id, data)      => send(`/transactions/${id}`, 'PATCH', data),
   };

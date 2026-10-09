@@ -76,6 +76,7 @@ const S = {
   monthRows: [],             // this month's transactions (heatmap, leaderboard, insights)
   past7Rows: [],             // past-7-days transactions (sparkline, hero delta)
   summary: null,             // SpendingDisplay from /transactions/summary
+  digest: null,              // today's digest from /insights/today
   offset: 0,
   limit: 50,
   hasMore: false,
@@ -128,9 +129,16 @@ function renderHero() {
   $('hero-date').textContent = new Date().toLocaleDateString('default',
     { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
+  const el = $('hero-delta');
+  if (S.digest) {
+    // The server's figure, so the hero and the digest panel always agree.
+    const d = Insights.deltaView(S.digest.pct_vs_avg);
+    el.textContent = d.text;
+    el.className = 'delta ' + d.cls;
+    return;
+  }
   const total7 = S.past7Rows.reduce((s, r) => s + spendVal(r), 0);
   const avg7 = total7 / 7;
-  const el = $('hero-delta');
   if (avg7 > 0) {
     const pct = Math.round((daily - avg7) / avg7 * 100);
     el.textContent = `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs your 7-day average`;
@@ -321,11 +329,55 @@ function renderHeatmap() {
 
 $('heatmap').addEventListener('click', e => {
   const cell = e.target.closest('.hm-cell');
-  if (!cell) return;
+  if (cell) openDay(cell.dataset.mdy, cell.dataset.label);
+});
+
+// ── Daily digest ──────────────────────────────────────────────────────────────
+
+// Fetched together with the rest of the page data so the hero amount and its
+// delta always come from the same moment. Failure (e.g. an older backend
+// without /insights) returns null and the page works without the digest.
+async function fetchDigest() {
+  try {
+    const [today, history] = await Promise.all([API.insightsToday(), API.insightsHistory(15)]);
+    return { today, history };
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+}
+
+function renderDigest(digest) {
+  S.digest = digest ? digest.today : null;
+  if (!digest) {
+    $('digest').hidden = true;
+    return;
+  }
+  try {
+    const past = (Array.isArray(digest.history) ? digest.history : []).filter(d => d.day !== digest.today.day);
+    $('digest-today').innerHTML = Insights.todayHtml(digest.today);
+    $('digest-note').textContent = Insights.todayView(digest.today).title;
+    $('digest-history').innerHTML = Insights.historyHtml(past);
+    $('digest').hidden = false;
+  } catch (err) {
+    // A malformed digest must not take the rest of the page down with it.
+    console.error(err);
+    S.digest = null;
+    $('digest').hidden = true;
+  }
+}
+
+// Opens one day in the ledger (used by the heatmap and the digest's past days).
+function openDay(mdyValue, label) {
   $('ledger-search').value = '';
   setPresetActive(null);
-  loadViewSafe({ mode: 'date', mdy: cell.dataset.mdy, label: cell.dataset.label });
+  loadViewSafe({ mode: 'date', mdy: mdyValue, label });
   $('ledger').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('digest-history').addEventListener('click', e => {
+  const row = e.target.closest('.dg-day');
+  if (row) openDay(row.dataset.mdy, row.dataset.label);
 });
 
 // ── Merchant leaderboard (this month) ─────────────────────────────────────────
@@ -751,12 +803,18 @@ window.addEventListener('resize', () => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+let refreshSeq = 0;
+
 async function refreshAll() {
   try {
-    const [summary, monthRows, p7] = await Promise.all([API.summary(), API.month(), API.past7()]);
+    const seq = ++refreshSeq;
+    const [summary, monthRows, p7, digest] = await Promise.all([API.summary(), API.month(), API.past7(), fetchDigest()]);
+    if (seq !== refreshSeq) return;   // a newer refresh (e.g. two quick entries) is already on its way
     S.summary = summary;
+    S.digest = digest ? digest.today : null;
     S.monthRows = monthRows || [];
     S.past7Rows = p7 || [];
+    renderDigest(digest);   // before the heavier panels so one of them failing can't leave it stale
     renderTicker();
     renderHero();
     renderSpark();

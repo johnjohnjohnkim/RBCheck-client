@@ -674,3 +674,54 @@ kbd {
   .pager { margin-left: 0; }
   .hero-amount { letter-spacing: -1px; }
 }
+
+
+/* ── Daily digest (reuses .columns / .panel / .rule-head) ───────────── */
+.dg-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.dg-amount { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.dg-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.dg-stats > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dg-num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dg-sub { font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: 1.6px; color: var(--ink-soft); margin: 18px 0 6px; }
+.dg-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px dotted var(--line); }
+.dg-row:last-child { border-bottom: none; }
+.dg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-meta { font-size: 11px; color: var(--ink-soft); font-style: italic; }
+.dg-total { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; }
+.dg-flag { padding: 4px 0; }
+.dg-reason { font-size: 12px; font-style: italic; color: var(--red); }
+.dg-day {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 2px 10px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.dg-day:last-child { border-bottom: none; }
+.dg-day:hover .dg-name { color: var(--accent); }
+.dg-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); opacity: 0.55; }
+.dg-flagmark { color: var(--red); font-size: 11px; }
+.dg-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 620px) {
+  .dg-stats { grid-template-columns: 1fr; }
+  .dg-amount { font-size: 32px; }
+}
+
+/* The hidden attribute must win over component display rules (quick-entry preview, pager, digest). */
+[hidden] { display: none !important; }

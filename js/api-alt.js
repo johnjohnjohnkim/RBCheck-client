@@ -1,16 +1,15 @@
 // API layer for the alternative frontend (index-alt.html).
 // Covers every endpoint the backend exposes. All functions return Promises.
+// Auth.fetch (js/auth.js) adds the API address and the login token.
 const API = (() => {
-  const BASE = 'http://johns-macbook-pro.tailcdfc4f.ts.net:8000';
-
   async function get(path) {
-    const r = await fetch(BASE + path);
+    const r = await Auth.fetch(path);
     if (!r.ok) throw new Error(`Server error: ${r.status}`);
     return r.json();
   }
 
   async function send(path, method, body) {
-    const r = await fetch(BASE + path, {
+    const r = await Auth.fetch(path, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

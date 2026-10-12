@@ -1,6 +1,6 @@
 // All network calls to the backend live here.
 // Every function is async — it returns a Promise, so callers must await it.
-const BASE_URL = 'http://johns-macbook-pro.tailcdfc4f.ts.net:8000'
+// Auth.fetch (js/auth.js) adds the API address and the login token.
 var offset = 0;
 var limit = 50;
 
@@ -10,7 +10,7 @@ var limit = 50;
  * Returns the parsed JSON response directly.
  */
 async function getSummary() {
-  const r = await fetch(`${BASE_URL}/transactions/summary`)
+  const r = await Auth.fetch(`/transactions/summary`)
   if (!r.ok) throw new Error(`Server error: ${r.status}`);
   return r.json()
 }
@@ -27,14 +27,14 @@ async function getSummary() {
  */
 async function getTransactions() {
   // const query = new URLSearchParams(params).toString()
-  // const r = await fetch(`${BASE_URL}/transactions?${query}`)
-  const r = await fetch(`${BASE_URL}/transactions/month`)
+  // const r = await Auth.fetch(`/transactions?${query}`)
+  const r = await Auth.fetch(`/transactions/month`)
   if (!r.ok) throw new Error(`Server error: %{r.status}`);
   return r.json();
 }
 
 async function allTransactions(){
-  const r = await fetch(`${BASE_URL}/transactions/?offset=${offset}&limit=${limit}`)
+  const r = await Auth.fetch(`/transactions/?offset=${offset}&limit=${limit}`)
   if (!r.ok) throw new Error(`Server error: %{r.status}`);
   return r.json();
 }
@@ -47,7 +47,7 @@ async function allTransactions(){
  * Returns the server's response (typically the newly created transaction with an ID).
  */
 async function createTransaction(data) {
-  const r = await fetch(`${BASE_URL}/transactions`, {
+  const r = await Auth.fetch(`/transactions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },  // tell the server we're sending JSON
     body: JSON.stringify(data)
@@ -56,7 +56,7 @@ async function createTransaction(data) {
 }
 
 async function editTransaction(data, id){
-  const r = await fetch(`${BASE_URL}/transactions/${id}`, {
+  const r = await Auth.fetch(`/transactions/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },  // tell the server we're sending JSON
     body: JSON.stringify(data)

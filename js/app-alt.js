@@ -34,9 +34,34 @@ function kindOf(tx) {
   return 'spend';
 }
 const spendVal = tx => {
+  if (tx._cancelled) return 0;
   const k = kindOf(tx);
   return k === 'spend' ? amt(tx) : k === 'refund' ? -amt(tx) : 0;
 };
+
+// A cash withdrawal that matches a credit-card payment of the same amount on the
+// same day is just money moved to cover the card, not new spending — so it
+// shouldn't count toward that day's contribution. Flag those withdrawals (via a
+// transient `_cancelled` field that spendVal honours). Matching is one-to-one:
+// each payment cancels at most one withdrawal of the same amount that day.
+function markCancelledWithdrawals(rows) {
+  const payments = {};  // "date|amount" → number of payments still free to cancel
+  for (const r of rows) {
+    delete r._cancelled;
+    if (kindOf(r) === 'payment') {
+      const key = dkey(r) + '|' + amt(r).toFixed(2);
+      payments[key] = (payments[key] || 0) + 1;
+    }
+  }
+  for (const r of rows) {
+    if (!String(r.transaction_type || '').toLowerCase().includes('withdraw')) continue;
+    const key = dkey(r) + '|' + amt(r).toFixed(2);
+    if (payments[key] > 0) {
+      r._cancelled = true;
+      payments[key]--;
+    }
+  }
+}
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 const FONT = "'Libre Caslon Text', Georgia, serif";
@@ -398,6 +423,7 @@ async function loadView(view) {
   }
   S.rows = (rows || []).slice().sort((a, b) =>
     (b.transaction_datetime || '').localeCompare(a.transaction_datetime || ''));
+  markCancelledWithdrawals(S.rows);
   $('ledger-label').textContent = viewLabel(view);
   renderLedger();
   renderChart();
@@ -731,6 +757,8 @@ async function refreshAll() {
     S.summary = summary;
     S.monthRows = monthRows || [];
     S.past7Rows = p7 || [];
+    markCancelledWithdrawals(S.monthRows);
+    markCancelledWithdrawals(S.past7Rows);
     renderTicker();
     renderHero();
     renderSpark();

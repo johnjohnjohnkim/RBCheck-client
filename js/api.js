@@ -29,13 +29,13 @@ async function getTransactions() {
   // const query = new URLSearchParams(params).toString()
   // const r = await Auth.fetch(`/transactions?${query}`)
   const r = await Auth.fetch(`/transactions/month`)
-  if (!r.ok) throw new Error(`Server error: %{r.status}`);
+  if (!r.ok) throw new Error(`Server error: ${r.status}`);
   return r.json();
 }
 
 async function allTransactions(){
   const r = await Auth.fetch(`/transactions/?offset=${offset}&limit=${limit}`)
-  if (!r.ok) throw new Error(`Server error: %{r.status}`);
+  if (!r.ok) throw new Error(`Server error: ${r.status}`);
   return r.json();
 }
 
@@ -52,6 +52,7 @@ async function createTransaction(data) {
     headers: { 'Content-Type': 'application/json' },  // tell the server we're sending JSON
     body: JSON.stringify(data)
   })
+  if (!r.ok) throw new Error(`Server error: ${r.status}`);
   return r.json()
 }
 
@@ -61,5 +62,6 @@ async function editTransaction(data, id){
     headers: { 'Content-Type': 'application/json' },  // tell the server we're sending JSON
     body: JSON.stringify(data)
   })
+  if (!r.ok) throw new Error(`Server error: ${r.status}`);
   return r.json()
 }

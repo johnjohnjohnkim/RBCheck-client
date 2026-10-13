@@ -10,7 +10,7 @@ There is no package manager, bundler, or dev server in this repo. It is plain HT
 
 ## Backend
 
-The API address is set in one place, `js/config.js`, and defaults to `https://api.rbcheck.gwanwoo.dev`. To use a local RBCheck instance, serve this folder from localhost and open the page with an `api` query parameter:
+The API address is set in one place, `js/config.js`. The demo site, `rbcheckdemo.gwanwoo.dev`, uses the demo API (`https://api.rbcheckdemo.gwanwoo.dev`), which serves a scrambled copy of the data that is rebuilt every hour; any other site uses the real one, `https://api.rbcheck.gwanwoo.dev`. To use a local RBCheck instance, serve this folder from localhost and open the page with an `api` query parameter:
 
 ```
 http://127.0.0.1:3000/index.html?api=http://127.0.0.1:8000
@@ -24,7 +24,7 @@ Manual entries made with Quick Entry are sent without an id; the server assigns 
 
 ## No login
 
-It's a public demo: the page loads straight away and anyone with the link can view, add and edit entries. The API only guards `/ingest`, which the Mac uses to send texts.
+The page loads straight away and anyone with the link can view, add and edit entries. On the demo site those edits land in the scrambled demo data and are undone at the next hourly rebuild. The API only guards `/ingest`, which the Mac uses to send texts.
 
 The API allows `localhost` and `127.0.0.1` on any port, so a local page can talk to a local API without extra setup.
 
@@ -65,4 +65,4 @@ python -m http.server 3000
 node --test
 ```
 
-Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js` (formatting, empty and partial digests, HTML escaping, history bars) and the real `js/api.js` against a scripted `fetch` (URLs, JSON writes, network failures and server error messages).
+Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js` (formatting, empty and partial digests, HTML escaping, history bars) which API each site uses (`js/config.js`), and the real `js/api.js` against a scripted `fetch` (URLs, JSON writes, network failures and server error messages).

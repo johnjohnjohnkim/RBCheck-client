@@ -466,12 +466,11 @@ async function loadView(view) {
 }
 
 async function loadViewSafe(view) {
-  if (isLocked()) return;
   try {
     await loadView(view);
   } catch (err) {
     console.error(err);
-    if (!isRejectedToken(err)) toast('Could not load entries: ' + err.message, 'error');
+    toast('Could not load entries: ' + err.message, 'error');
   }
 }
 
@@ -576,7 +575,6 @@ $('range-apply').addEventListener('click', () => {
 // Move the page offset only if the page actually loads, so a failed request
 // can't leave the label and the next click out of step with the table.
 async function pageTo(offset) {
-  if (isLocked()) return;
   const previous = S.offset;
   S.offset = offset;
   try {
@@ -584,7 +582,7 @@ async function pageTo(offset) {
   } catch (err) {
     S.offset = previous;
     console.error(err);
-    if (!isRejectedToken(err)) toast('Could not load entries: ' + err.message, 'error');
+    toast('Could not load entries: ' + err.message, 'error');
   }
 }
 
@@ -725,7 +723,7 @@ $('qa-submit').addEventListener('click', async () => {
     toast(`Logged ${fmt(p.amount)} at ${p.place}`);
     refreshAll();
   } catch (err) {
-    if (!isRejectedToken(err)) toast('Could not save: ' + err.message, 'error');
+    toast('Could not save: ' + err.message, 'error');
   } finally {
     qaBusy = false;
     renderQaPreview();   // re-enables the button if the input is still valid
@@ -784,14 +782,13 @@ $('ed-form').addEventListener('submit', async e => {
     toast('Entry updated');
     refreshAll();
   } catch (err) {
-    if (!isRejectedToken(err)) toast('Could not save: ' + err.message, 'error');
+    toast('Could not save: ' + err.message, 'error');
   }
 });
 
 // ── Keyboard shortcuts & resize ───────────────────────────────────────────────
 
 document.addEventListener('keydown', e => {
-  if (isLocked()) return;   // no shortcuts reach the page behind the sign-in screen
   if (e.key === 'Escape') return closeEdit();
   const tag = (document.activeElement || {}).tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -828,100 +825,9 @@ async function refreshAll() {
     await loadView(S.view);
   } catch (err) {
     console.error(err);
-    if (isRejectedToken(err)) return;   // the sign-in screen is already explaining it
     toast(err.message || 'Could not reach the RBCheck server', 'error');
   }
 }
-
-// ── Sign-in screen ────────────────────────────────────────────────────────────
-
-// A 401 re-opens the sign-in screen itself (see API.onUnauthorized), so callers skip their own toast.
-const isRejectedToken = err => err instanceof Auth.AuthError && err.status === 401;
-
-function showSignIn(message = '') {
-  const alreadyOpen = isLocked();
-  $('signin-error').textContent = message;
-  $('signin-overlay').classList.add('open');
-  // While signed out nothing behind the overlay may be reachable by keyboard, screen
-  // reader or copy: the page content is made inert and any open editor is closed.
-  const page = document.querySelector('.sheet');
-  page.inert = true;
-  page.setAttribute('aria-hidden', 'true');   // for browsers without `inert`
-  closeEdit();
-  clearTimeout(searchTimer);   // a pending search must not fire a request while signed out
-  if (!alreadyOpen) $('signin-password').value = '';   // several rejected requests must not clear what is being typed
-  const field = $('signin-email').value ? $('signin-password') : $('signin-email');
-  field.focus();   // also puts focus back after a failed attempt disabled the button
-}
-
-function hideSignIn() {
-  $('signin-overlay').classList.remove('open');
-  document.querySelector('.sheet').inert = false;
-  document.querySelector('.sheet').removeAttribute('aria-hidden');
-  $('signin-password').value = '';   // don't leave the password in the page
-}
-
-const isLocked = () => $('signin-overlay').classList.contains('open');
-
-// Checks the stored token against the server, then loads the page. A rejected
-// token re-opens sign-in (via onUnauthorized); an unreachable server keeps it open
-// with a message, so nothing is shown before this succeeds.
-let entering = false;
-
-async function enter() {
-  if (entering) return;   // a double submit must not run everything twice
-  entering = true;
-  $('signin-submit').disabled = true;
-  try {
-    await API.summary();
-  } catch (err) {
-    if (!isRejectedToken(err)) {
-      showSignIn(`Could not reach RBCheck (${err.message}). Press Sign in to try again.`);
-    }
-    return;
-  } finally {
-    entering = false;
-    $('signin-submit').disabled = false;
-  }
-  hideSignIn();
-  $('signout-btn').hidden = false;
-  refreshAll();
-}
-
-API.onUnauthorized(() => {
-  showSignIn('Your session has ended. Sign in again.');
-});
-
-$('signin-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  if (entering) return;   // a check is already running
-  const email = $('signin-email').value.trim();
-  const password = $('signin-password').value;
-  // Empty fields retry with the token already held (after the server was unreachable).
-  if (!email || !password) {
-    if (API.hasToken()) return enter();
-    $('signin-error').textContent = 'Enter your email and password.';
-    return;
-  }
-  entering = true;
-  $('signin-submit').disabled = true;
-  try {
-    await API.login(email, password);
-  } catch (err) {
-    $('signin-error').textContent = err.message;
-    $('signin-password').select();
-    return;
-  } finally {
-    entering = false;
-    $('signin-submit').disabled = false;
-  }
-  enter();
-});
-
-$('signout-btn').addEventListener('click', () => {
-  API.token.clear();
-  location.reload();   // drops everything held in the page
-});
 
 function storedTheme() {
   try { return localStorage.getItem('rb-theme') || 'light'; } catch { return 'light'; }
@@ -931,6 +837,5 @@ function storedTheme() {
   applyTheme(storedTheme(), false);
   setDateline();
   setPresetActive('month');
-  if (API.hasToken()) enter();
-  else showSignIn();
+  refreshAll();
 })();

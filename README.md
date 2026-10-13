@@ -22,11 +22,9 @@ See the [RBCheck README](../RBCheck/README.md) for the endpoints these files cal
 
 Manual entries made with Quick Entry are sent without an id; the server assigns one.
 
-## Signing in
+## No login
 
-The page opens on a sign-in screen and loads nothing until it succeeds. Sign in with the email and password created on the server with `python -m app.scripts.create_user`. There is one login, with full access.
-
-The token the API returns is kept in this browser's `localStorage` (or just in memory if storage is blocked) and sent only in an `Authorization` header, never in the URL. When it expires (after the API's `ACCESS_TOKEN_EXPIRE_MINUTES`) or is rejected, it is forgotten and the sign-in screen returns. **Sign out** in the masthead forgets it on this device.
+It's a public demo: the page loads straight away and anyone with the link can view, add and edit entries. The API only guards `/ingest`, which the Mac uses to send texts.
 
 The API allows `localhost` and `127.0.0.1` on any port, so a local page can talk to a local API without extra setup.
 
@@ -38,10 +36,9 @@ RBCheck-client/
 ├── css/styles.css
 └── js/
     ├── config.js   API base URL
-    ├── auth.js     Token storage helpers (pure, unit tested)
-    ├── api.js      API client (signs in; sends the token; a 401 clears it and shows sign-in again)
+    ├── api.js      API client
     ├── insights.js Digest rendering helpers (pure functions, unit tested)
-    └── app.js      Rendering, state and the sign-in flow
+    └── app.js      Rendering and state
 ```
 
 ## Running locally
@@ -57,7 +54,6 @@ Then visit `http://127.0.0.1:3000/index.html`.
 ```bash
 # in the RBCheck-api repo
 uvicorn app.main:app                     # http://127.0.0.1:8000
-python -m app.scripts.create_user you@example.com
 # in this repo
 python -m http.server 3000
 # then open http://127.0.0.1:3000/index.html?api=http://127.0.0.1:8000
@@ -69,4 +65,4 @@ python -m http.server 3000
 node --test
 ```
 
-Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js` (formatting, empty and partial digests, HTML escaping, history bars), the token helpers in `js/auth.js`, and the real `js/api.js` against a scripted `fetch` (sign-in sends a form and keeps the token, a wrong password stores nothing, the token goes in a header and never the URL, a 401 clears it and shows sign-in, network failures are not mistaken for auth failures).
+Runs `tests/*.test.mjs` (Node 18+, no dependencies). They cover the digest rendering helpers in `js/insights.js` (formatting, empty and partial digests, HTML escaping, history bars) and the real `js/api.js` against a scripted `fetch` (URLs, JSON writes, network failures and server error messages).

@@ -727,8 +727,5 @@ kbd {
 [hidden] { display: none !important; }
 
 
-/* ── Sign-out button, sign-in screen ────────────────────────────────── */
+/* ── Masthead tools ─────────────────────────────────────────────────── */
 .masthead-tools { display: flex; align-items: center; gap: 10px; }
-/* The sign-in screen hides the page behind it completely rather than blurring it. */
-.overlay.signin { background: var(--paper); backdrop-filter: none; z-index: 200; }
-.signin-error { min-height: 18px; font-size: 12.5px; font-style: italic; color: var(--red); margin-top: 4px; }

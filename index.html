@@ -19,8 +19,7 @@
       <span class="masthead-kicker">Vol. I — A Personal Ledger</span>
       <span id="masthead-date"></span>
       <span class="masthead-tools">
-        <span id="access-badge" class="badge" hidden></span>
-        <button id="lock-btn" class="btn-ghost btn-sm" type="button" title="Forget the token on this device" hidden>Lock</button>
+        <button id="signout-btn" class="btn-ghost btn-sm" type="button" title="Sign out on this device" hidden>Sign out</button>
         <button id="theme-toggle" class="theme-btn" title="Toggle light / dark">☾</button>
       </span>
     </div>
@@ -233,19 +232,22 @@
   </div>
 </div>
 
-<!-- ── Unlock screen (nothing loads until a token is accepted) ───── -->
-<div class="overlay unlock" id="unlock-overlay" role="dialog" aria-modal="true" aria-labelledby="unlock-title">
+<!-- ── Sign-in screen (nothing loads until it succeeds) ─────────── -->
+<div class="overlay signin" id="signin-overlay" role="dialog" aria-modal="true" aria-labelledby="signin-title">
   <div class="modal">
-    <div class="modal-head"><h3 id="unlock-title">RBCheck is locked</h3></div>
-    <form id="unlock-form" autocomplete="off">
-      <p class="unlock-help">Paste your access token. The <b>read</b> token shows the ledger; the <b>write</b> token also lets you add and edit entries. It is kept on this device only.</p>
+    <div class="modal-head"><h3 id="signin-title">Sign in to RBCheck</h3></div>
+    <form id="signin-form">
       <div class="fg">
-        <label for="unlock-token">Token</label>
-        <input type="text" id="unlock-token" class="secret" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <label for="signin-email">Email</label>
+        <input type="email" id="signin-email" autocomplete="username" autocapitalize="off" spellcheck="false" />
       </div>
-      <p class="unlock-error" id="unlock-error" role="alert"></p>
+      <div class="fg">
+        <label for="signin-password">Password</label>
+        <input type="password" id="signin-password" autocomplete="current-password" />
+      </div>
+      <p class="signin-error" id="signin-error" role="alert"></p>
       <div class="factions">
-        <button type="submit" class="btn-ink" id="unlock-submit">Unlock</button>
+        <button type="submit" class="btn-ink" id="signin-submit">Sign in</button>
       </div>
     </form>
   </div>

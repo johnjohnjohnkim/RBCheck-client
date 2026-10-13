@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Auth from '../js/auth.js';
 
-const { AuthError, createTokenStore, cleanToken, bearer, accessLabel } = Auth;
+const { AuthError, createTokenStore, bearer } = Auth;
 
 function fakeStorage() {
   const data = new Map();
@@ -49,13 +49,6 @@ test('clearing forgets the token even when storage refuses', () => {
   assert.equal(store.get(), '');
 });
 
-test('pasted tokens are trimmed, blanks become empty', () => {
-  assert.equal(cleanToken('  abc\n'), 'abc');
-  assert.equal(cleanToken('   '), '');
-  assert.equal(cleanToken(undefined), '');
-  assert.equal(cleanToken(null), '');
-});
-
 test('the bearer header is built only when there is a token', () => {
   assert.deepEqual(bearer('abc'), { Authorization: 'Bearer abc' });
   assert.deepEqual(bearer(''), {});
@@ -66,11 +59,6 @@ test('auth errors carry their status and are errors', () => {
   assert.ok(err instanceof Error);
   assert.equal(err.status, 403);
   assert.equal(err.name, 'AuthError');
-});
-
-test('access labels', () => {
-  assert.equal(accessLabel(true), 'Full access');
-  assert.equal(accessLabel(false), 'Read-only');
 });
 
 test('a token set with persist:false lives in memory only', () => {

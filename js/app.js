@@ -81,7 +81,6 @@ const S = {
   limit: 50,
   hasMore: false,
   editing: null,
-  canWrite: false,           // true when the stored token is the write token
   qa: null,                  // last parsed quick-add preview
 };
 
@@ -686,7 +685,7 @@ function renderQaPreview() {
   }
   const p = parseQuick(text);
   S.qa = p;
-  $('qa-submit').disabled = !(S.canWrite && p.amount > 0 && p.place);
+  $('qa-submit').disabled = !(p.amount > 0 && p.place);
   box.hidden = false;
   const chip = (label, val, missing) =>
     `<span class="chip${missing ? ' chip-missing' : ''}"><b>${label}</b>${esc(val)}</span>`;
@@ -706,7 +705,7 @@ let qaBusy = false;
 
 $('qa-submit').addEventListener('click', async () => {
   const p = S.qa;
-  if (qaBusy || !S.canWrite || !p || !(p.amount > 0) || !p.place) return;
+  if (qaBusy || !p || !(p.amount > 0) || !p.place) return;
   qaBusy = true;
   $('qa-submit').disabled = true;
   const now = new Date();
@@ -759,7 +758,6 @@ $('ledger-body').addEventListener('click', e => {
   if (!row) return;
   const tx = S.rows.find(r => r.transaction_id === +row.dataset.id);
   if (!tx) return;
-  if (!S.canWrite) return toast('This token is read-only. Lock and unlock with the write token to edit.', 'error');
   openEdit(tx);
 });
 
@@ -769,7 +767,7 @@ $('ed-overlay').addEventListener('click', e => { if (e.target === $('ed-overlay'
 
 $('ed-form').addEventListener('submit', async e => {
   e.preventDefault();
-  if (!S.editing || !S.canWrite) return;
+  if (!S.editing) return;
   const date = $('ed-date').value;
   const time = $('ed-time').value || '12:00';
   const amount = parseFloat($('ed-amount').value);
@@ -793,7 +791,7 @@ $('ed-form').addEventListener('submit', async e => {
 // ── Keyboard shortcuts & resize ───────────────────────────────────────────────
 
 document.addEventListener('keydown', e => {
-  if (isLocked()) return;   // no shortcuts reach the page behind the unlock screen
+  if (isLocked()) return;   // no shortcuts reach the page behind the sign-in screen
   if (e.key === 'Escape') return closeEdit();
   const tag = (document.activeElement || {}).tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -830,102 +828,97 @@ async function refreshAll() {
     await loadView(S.view);
   } catch (err) {
     console.error(err);
-    if (isRejectedToken(err)) return;   // the unlock prompt is already explaining it
+    if (isRejectedToken(err)) return;   // the sign-in screen is already explaining it
     toast(err.message || 'Could not reach the RBCheck server', 'error');
   }
 }
 
-// ── Unlock screen ─────────────────────────────────────────────────────────────
+// ── Sign-in screen ────────────────────────────────────────────────────────────
 
-// A 401 re-opens the prompt itself (see API.onUnauthorized), so callers skip their own toast.
+// A 401 re-opens the sign-in screen itself (see API.onUnauthorized), so callers skip their own toast.
 const isRejectedToken = err => err instanceof Auth.AuthError && err.status === 401;
 
-function showUnlock(message = '') {
-  const alreadyOpen = $('unlock-overlay').classList.contains('open');
-  $('unlock-error').textContent = message;
-  $('unlock-overlay').classList.add('open');
-  // While locked nothing behind the overlay may be reachable by keyboard, screen
+function showSignIn(message = '') {
+  const alreadyOpen = isLocked();
+  $('signin-error').textContent = message;
+  $('signin-overlay').classList.add('open');
+  // While signed out nothing behind the overlay may be reachable by keyboard, screen
   // reader or copy: the page content is made inert and any open editor is closed.
   const page = document.querySelector('.sheet');
   page.inert = true;
   page.setAttribute('aria-hidden', 'true');   // for browsers without `inert`
   closeEdit();
-  clearTimeout(searchTimer);   // a pending search must not fire a request while locked
-  if (!alreadyOpen) $('unlock-token').value = '';   // several rejected requests must not clear what is being typed
-  $('unlock-token').focus();   // also puts focus back after a failed attempt disabled the button
-  $('unlock-token').select();
+  clearTimeout(searchTimer);   // a pending search must not fire a request while signed out
+  if (!alreadyOpen) $('signin-password').value = '';   // several rejected requests must not clear what is being typed
+  const field = $('signin-email').value ? $('signin-password') : $('signin-email');
+  field.focus();   // also puts focus back after a failed attempt disabled the button
 }
 
-function hideUnlock() {
-  $('unlock-overlay').classList.remove('open');
+function hideSignIn() {
+  $('signin-overlay').classList.remove('open');
   document.querySelector('.sheet').inert = false;
   document.querySelector('.sheet').removeAttribute('aria-hidden');
-  $('unlock-token').value = '';   // don't leave the secret in the page
+  $('signin-password').value = '';   // don't leave the password in the page
 }
 
-const isLocked = () => $('unlock-overlay').classList.contains('open');
+const isLocked = () => $('signin-overlay').classList.contains('open');
 
-// Shows what the stored token allows, and switches the editing controls to match.
-function applyAccess() {
-  $('access-badge').textContent = Auth.accessLabel(S.canWrite);
-  $('access-badge').hidden = false;
-  $('lock-btn').hidden = false;
-  const input = $('qa-input');
-  input.disabled = !S.canWrite;
-  input.placeholder = S.canWrite
-    ? input.dataset.placeholder
-    : 'Read-only token: unlock with the write token to add entries';
-  renderQaPreview();
-}
-
-// Checks the stored token against the server, then loads the page. An invalid
-// token re-opens the prompt (via onUnauthorized); an unreachable server keeps it
-// open with a message, so nothing sensitive is ever shown before this succeeds.
+// Checks the stored token against the server, then loads the page. A rejected
+// token re-opens sign-in (via onUnauthorized); an unreachable server keeps it open
+// with a message, so nothing is shown before this succeeds.
 let entering = false;
 
 async function enter() {
   if (entering) return;   // a double submit must not run everything twice
   entering = true;
-  $('unlock-submit').disabled = true;
+  $('signin-submit').disabled = true;
   try {
-    S.canWrite = await API.probeWrite();
+    await API.summary();
   } catch (err) {
-    // A rejected token has already re-opened the prompt. Anything else (server down,
-    // an error status) keeps the token for this page and offers a retry.
     if (!isRejectedToken(err)) {
-      showUnlock(`Could not check your access (${err.message}). Press Unlock to try again.`);
+      showSignIn(`Could not reach RBCheck (${err.message}). Press Sign in to try again.`);
     }
     return;
   } finally {
     entering = false;
-    $('unlock-submit').disabled = false;
+    $('signin-submit').disabled = false;
   }
-  API.token.set(API.token.get());   // the token works: remember it on this device
-  hideUnlock();
-  applyAccess();
+  hideSignIn();
+  $('signout-btn').hidden = false;
   refreshAll();
 }
 
 API.onUnauthorized(() => {
-  S.canWrite = false;
-  showUnlock('That token was not accepted. Paste the read or write token and try again.');
+  showSignIn('Your session has ended. Sign in again.');
 });
 
-$('unlock-form').addEventListener('submit', e => {
+$('signin-form').addEventListener('submit', async e => {
   e.preventDefault();
-  if (entering) return;   // a check is already running; don't swap the token under it
-  // Empty input retries with the token already held for this page (after a server error).
-  const token = Auth.cleanToken($('unlock-token').value) || API.token.get();
-  if (!token) {
-    $('unlock-error').textContent = 'Paste a token first.';
-    $('unlock-token').focus();
+  if (entering) return;   // a check is already running
+  const email = $('signin-email').value.trim();
+  const password = $('signin-password').value;
+  // Empty fields retry with the token already held (after the server was unreachable).
+  if (!email || !password) {
+    if (API.hasToken()) return enter();
+    $('signin-error').textContent = 'Enter your email and password.';
     return;
   }
-  API.token.set(token, { persist: false });   // saved for good only once the server accepts it
+  entering = true;
+  $('signin-submit').disabled = true;
+  try {
+    await API.login(email, password);
+  } catch (err) {
+    $('signin-error').textContent = err.message;
+    $('signin-password').select();
+    return;
+  } finally {
+    entering = false;
+    $('signin-submit').disabled = false;
+  }
   enter();
 });
 
-$('lock-btn').addEventListener('click', () => {
+$('signout-btn').addEventListener('click', () => {
   API.token.clear();
   location.reload();   // drops everything held in the page
 });
@@ -935,10 +928,9 @@ function storedTheme() {
 }
 
 (function boot() {
-  $('qa-input').dataset.placeholder = $('qa-input').placeholder;
   applyTheme(storedTheme(), false);
   setDateline();
   setPresetActive('month');
   if (API.hasToken()) enter();
-  else showUnlock();
+  else showSignIn();
 })();

@@ -35,16 +35,17 @@ const API = (() => {
         tokens.clear();
         onUnauthorized();
       }
-      throw new Auth.AuthError('That token was not accepted.', 401);
+      throw new Auth.AuthError('Your session has ended.', 401);
     }
-    if (r.status === 403) {
-      throw new Auth.AuthError((await detailOf(r)) || 'This token is read-only.', 403);
-    }
+    await failOn(r);
+    return r.json();
+  }
+
+  async function failOn(r) {
     if (!r.ok) {
       const detail = await detailOf(r);
       throw new Error(detail ? `${detail} (${r.status})` : `Server error: ${r.status}`);
     }
-    return r.json();
   }
 
   const get = path => request(path);
@@ -59,16 +60,17 @@ const API = (() => {
     hasToken: () => Boolean(tokens.get()),
     // Called (once per rejected request) when the server says the token is not valid.
     onUnauthorized: fn => { onUnauthorized = fn; },
-    // Does the stored token allow writing? The write-only /ingest/cursor answers 200
-    // for the write token and 403 for the read token; 401 (bad token) still throws.
-    async probeWrite() {
+    // Swaps an email and password for a token (POST /login, a form post) and keeps it.
+    async login(email, password) {
+      let r;
       try {
-        await get('/ingest/cursor');
-        return true;
-      } catch (err) {
-        if (err instanceof Auth.AuthError && err.status === 403) return false;
-        throw err;
+        r = await fetch(BASE + '/login', { method: 'POST', body: new URLSearchParams({ username: email, password }) });
+      } catch {
+        throw new Error('Cannot reach the server');
       }
+      if (r.status === 403) throw new Auth.AuthError('Wrong email or password.', 403);
+      await failOn(r);
+      tokens.set((await r.json()).access_token);
     },
 
     summary:    ()              => get('/transactions/summary'),

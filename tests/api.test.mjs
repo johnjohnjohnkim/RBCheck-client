@@ -10,6 +10,7 @@ function load({ responses, storage, onFetch } = {}) {
   const queue = [...(responses || [])];
   const sandbox = {
     Auth,
+    URLSearchParams,
     window: { RBCHECK_API_BASE: 'http://api.test', localStorage: storage },
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
@@ -63,23 +64,43 @@ test('a 401 clears the stored token and triggers the prompt', async () => {
   assert.equal(storage.data.size, 0);
 });
 
-test('a 403 keeps the token and reports that it is read-only', async () => {
-  const storage = memoryStorage('read-token');
-  const { API } = load({ responses: [reply(403, { detail: 'This token is read-only.' })], storage });
+test('a 403 on an ordinary request is an error that keeps the session', async () => {
+  const storage = memoryStorage('t');
+  const { API } = load({ responses: [reply(403, { detail: 'Not allowed.' })], storage });
   let prompts = 0;
   API.onUnauthorized(() => { prompts += 1; });
-  await assert.rejects(API.create({}), err => err instanceof Auth.AuthError && err.status === 403 &&
-    err.message === 'This token is read-only.');
+  await assert.rejects(API.create({}), err => err.message === 'Not allowed. (403)');
   assert.equal(prompts, 0);
   assert.equal(API.hasToken(), true);
 });
 
-test('probeWrite: write token yes, read token no, bad token rethrows', async () => {
-  assert.equal(await load({ responses: [reply(200, { cursor: 5 })], storage: memoryStorage('w') }).API.probeWrite(), true);
-  assert.equal(await load({ responses: [reply(403, {})], storage: memoryStorage('r') }).API.probeWrite(), false);
-  const bad = load({ responses: [reply(401, {})], storage: memoryStorage('x') });
-  await assert.rejects(bad.API.probeWrite(), err => err.status === 401);
-  assert.equal(bad.API.hasToken(), false);
+test('login posts the form fields without a token and keeps the token it gets back', async () => {
+  const { API, calls } = load({ responses: [reply(200, { access_token: 'jwt-1', token_type: 'bearer' })] });
+  await API.login('me@example.com', 'pa ss&word');
+  assert.equal(calls[0].url, 'http://api.test/login');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.headers, undefined);   // no Authorization header
+  const form = calls[0].options.body;
+  assert.equal(form.get('username'), 'me@example.com');
+  assert.equal(form.get('password'), 'pa ss&word');
+  assert.equal(API.token.get(), 'jwt-1');
+});
+
+test('a wrong password is reported and stores nothing', async () => {
+  const storage = memoryStorage();
+  const { API } = load({ responses: [reply(403, { detail: 'Invalid credentials' })], storage });
+  await assert.rejects(API.login('me@example.com', 'nope'),
+    err => err instanceof Auth.AuthError && err.status === 403 && err.message === 'Wrong email or password.');
+  assert.equal(API.hasToken(), false);
+  assert.equal(storage.data.size, 0);
+});
+
+test('login: an unreachable or failing server is not reported as a wrong password', async () => {
+  const down = load({ responses: [new TypeError('fetch failed')] });
+  await assert.rejects(down.API.login('a@b.c', 'x'), err => err.message === 'Cannot reach the server');
+  const broken = load({ responses: [reply(500, { detail: 'boom' })] });
+  await assert.rejects(broken.API.login('a@b.c', 'x'), err => !(err instanceof Auth.AuthError) && err.message === 'boom (500)');
+  assert.equal(broken.API.hasToken(), false);
 });
 
 test('a network failure is not an auth error and does not forget the token', async () => {
@@ -128,15 +149,4 @@ test('parallel requests rejected together prompt only once', async () => {
   API.onUnauthorized(() => { prompts += 1; });
   await Promise.allSettled([API.summary(), API.month(), API.past7(), API.insightsToday()]);
   assert.equal(prompts, 1);
-});
-
-test('probeWrite: a missing or failing endpoint is a server problem, not a verdict on the token', async () => {
-  for (const status of [404, 500, 503]) {
-    const { API } = load({ responses: [reply(status, {})], storage: memoryStorage('good-token') });
-    await assert.rejects(API.probeWrite(), err => !(err instanceof Auth.AuthError), String(status));
-    assert.equal(API.token.get(), 'good-token');
-  }
-  const down = load({ responses: [new TypeError('fetch failed')], storage: memoryStorage('good-token') });
-  await assert.rejects(down.API.probeWrite(), err => err.message === 'Cannot reach the server');
-  assert.equal(down.API.token.get(), 'good-token');
 });

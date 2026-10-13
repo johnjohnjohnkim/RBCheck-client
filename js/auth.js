@@ -7,7 +7,7 @@
 
   const KEY = 'rbcheck-token';
 
-  // 401 = the token is missing or wrong; 403 = it is valid but read-only.
+  // 401 = the token is missing, expired or wrong; 403 = a wrong email or password at sign-in.
   class AuthError extends Error {
     constructor(message, status) {
       super(message);
@@ -26,8 +26,7 @@
         if (memory) return memory;
         try { return storage.getItem(KEY) || ''; } catch { return ''; }
       },
-      // persist:false keeps the token for this page only, until it has been
-      // checked against the server and set again with persist:true.
+      // persist:false keeps the token for this page only.
       set(token, { persist = true } = {}) {
         memory = token;
         if (!persist) return;
@@ -40,18 +39,9 @@
     };
   }
 
-  // What a person pastes is often padded with spaces or a newline.
-  function cleanToken(raw) {
-    return String(raw ?? '').trim();
-  }
-
   function bearer(token) {
     return token ? { Authorization: 'Bearer ' + token } : {};
   }
 
-  function accessLabel(canWrite) {
-    return canWrite ? 'Full access' : 'Read-only';
-  }
-
-  return { AuthError, createTokenStore, cleanToken, bearer, accessLabel };
+  return { AuthError, createTokenStore, bearer };
 });

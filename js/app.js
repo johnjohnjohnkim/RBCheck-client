@@ -1,401 +1,944 @@
+// RBCheck — The Daily Ledger.
+// Single-page app driving index.html. Network calls live in js/api.js.
+
+// ── Tiny helpers ──────────────────────────────────────────────────────────────
+
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+const fmt = n => {
+  n = Number(n) || 0;
+  const s = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (n < 0 ? '−$' : '$') + s;
+};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const titleCase = s => s.replace(/\S+/g, w => w[0].toUpperCase() + w.slice(1));
+
+const localKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const mdy = d => `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+const toLocalISO = d => `${localKey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+const dkey = tx => (tx.transaction_datetime || '').slice(0, 10);
+const amt = tx => parseFloat(tx.amount) || 0;
+// How each entry counts toward spending. Matched on substrings because the
+// backend emits full names ("Credit Card Payment", "Credit Refund", "Deposit",
+// "CC Purchase", "Withdrawal"). "payment" must be checked before "credit" so
+// "Credit Card Payment" isn't mistaken for a refund.
+//   payment          → card payment: grey, ignored in spending math
+//   deposit          → money in: green, ignored in spending math
+//   credit / refund  → money back: green, subtracts from spending
+//   anything else    → spending
+function kindOf(tx) {
+  const t = String(tx.transaction_type || '').toLowerCase();
+  if (t.includes('payment')) return 'payment';
+  if (t.includes('deposit')) return 'deposit';
+  if (t.includes('refund') || t.includes('credit')) return 'refund';
+  return 'spend';
+}
+const spendVal = tx => {
+  const k = kindOf(tx);
+  return k === 'spend' ? amt(tx) : k === 'refund' ? -amt(tx) : 0;
+};
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const FONT = "'Libre Caslon Text', Georgia, serif";
+
+function timeLabel(tx) {
+  const t = (tx.transaction_datetime || '').slice(11, 16);
+  if (!t) return '';
+  let [h, m] = t.split(':').map(Number);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${pad(m)} ${ap}`;
+}
+
+// Transaction types get a colored pill. Known types are pinned to a hue,
+// anything else is hashed onto the palette so it stays consistent.
+function pill(type) {
+  const label = type || 'other';
+  const kind = kindOf({ transaction_type: label });
+  let idx;
+  if (kind === 'payment') idx = 6;                          // grey
+  else if (kind === 'deposit' || kind === 'refund') idx = 1; // green
+  else {
+    const t = String(label).toLowerCase();
+    let h = 0;
+    for (const ch of t) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    idx = h % 6;
+  }
+  return `<span class="pill pill-${idx}">${esc(label)}</span>`;
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let filtered = [...TRANSACTIONS];  // the list of transactions currently shown (changes when filters are applied)
-let spendingChart = null;           // reference to the bar chart so we can destroy it before redrawing
-let merchantChart = null;           // reference to the donut chart, same reason
-let weekCardMode = 'fixed';         // which "week" mode the top card shows: 'fixed' = Sun→today, 'rolling' = last 7 days
-let editingTx = null;               // transaction being edited, null when adding
+const S = {
+  view: { mode: 'month' },   // what the ledger is currently showing
+  lastPreset: 'month',       // preset to fall back to when search is cleared
+  rows: [],                  // rows in the ledger right now
+  monthRows: [],             // this month's transactions (heatmap, leaderboard, insights)
+  past7Rows: [],             // past-7-days transactions (sparkline, hero delta)
+  summary: null,             // SpendingDisplay from /transactions/summary
+  digest: null,              // today's digest from /insights/today
+  offset: 0,
+  limit: 50,
+  hasMore: false,
+  editing: null,
+  canWrite: false,           // true when the stored token is the write token
+  qa: null,                  // last parsed quick-add preview
+};
 
-// ── Chart.js defaults ─────────────────────────────────────────────────────────
+// ── Toasts ────────────────────────────────────────────────────────────────────
 
-Chart.defaults.color = "#7a6e64";
-Chart.defaults.borderColor = "rgb(214, 206, 195)";
-Chart.defaults.font.family = "'Libre Caslon Text', Georgia, serif";
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Takes a list of transactions and buckets the dollar amounts together by time period.
- *
- * Think of it like sorting receipts into labeled envelopes:
- *   - period = "month"  → one envelope per month  (e.g. "Jun 25")
- *   - period = "week"   → one envelope per week    (e.g. "Jun 1")
- *   - anything else     → one envelope per day     (e.g. "Jun 5")
- *
- * Returns a plain object like { "Jun 25": 412.50, "May 25": 310.00 }.
- */
-function groupByPeriod(txs, period) {
-  const map = {};
-  for (const tx of txs) {
-    let key;
-    const d = new Date(tx.date + "T00:00:00");
-    if (period === "month") {
-      key = d.toLocaleString("default", { month: "short", year: "2-digit" });
-    } else if (period === "week") {
-      // Rewind d back to the Sunday that starts its week, use that as the label
-      const start = new Date(d);
-      start.setDate(d.getDate() - d.getDay());
-      key = start.toLocaleDateString("default", { month: "short", day: "numeric" });
-    } else {
-      key = d.toLocaleDateString("default", { month: "short", day: "numeric" });
-    }
-    // Add this transaction's amount to whatever's already in that envelope (default 0)
-    map[key] = (map[key] || 0) + tx.amount;
-  }
-  return map;
+function toast(msg, kind = 'ok') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3500);
 }
 
-/**
- * Takes a list of transactions and adds up the total spent at each merchant.
- *
- * Like groupByPeriod but the envelopes are labeled by store name instead of date.
- * Returns { "Trader Joe's": 85.20, "Netflix": 15.99, ... }.
- */
-function groupByMerchant(txs) {
-  const map = {};
-  for (const tx of txs) {
-    map[tx.merchant] = (map[tx.merchant] || 0) + tx.amount;
-  }
-  return map;
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+function applyTheme(t, save = true) {
+  document.documentElement.dataset.theme = t;
+  if (save) { try { localStorage.setItem('rb-theme', t); } catch { /* blocked: theme lasts for this page */ } }
+  $('theme-toggle').textContent = t === 'dark' ? '☀' : '☾';
+  renderChart();
+  renderSpark();
 }
 
-// ── Render summary cards ──────────────────────────────────────────────────────
+$('theme-toggle').addEventListener('click', () =>
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 
-/**
- * Updates the three summary number cards at the top of the page:
- *   "Today"   – total spent today (always uses ALL transactions, not filtered)
- *   "Month"   – total spent this calendar month from the filtered list
- *   "Week"    – either Sun→today ("fixed") or the last 7 days ("rolling"),
- *               depending on the weekCardMode toggle
- *
- * It writes the dollar amounts and label text directly into the DOM elements
- * that already exist in the HTML.
- */
-async function renderCards() {
-  const now = new Date();
-  const summary = await getSummary();
+// ── Masthead / ticker / hero ──────────────────────────────────────────────────
 
-  document.getElementById("stat-daily").textContent = fmt(parseFloat(summary.daily) || 0);
-  document.getElementById("stat-daily-sub").textContent =
-    now.toLocaleDateString("default", { weekday: "long", month: "long", day: "numeric" });
-  document.getElementById("stat-month").textContent = fmt(parseFloat(summary.monthly) || 0);
-  document.getElementById("stat-month-label").textContent =
-    now.toLocaleString("default", { month: "long", year: "numeric" });
+function setDateline() {
+  $('masthead-date').textContent = new Date().toLocaleDateString('default',
+    { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
 
-  if (weekCardMode === 'fixed') {
-    document.getElementById("stat-week").textContent = fmt(parseFloat(summary.weekly) || 0);
-    document.getElementById("stat-week-label").textContent = "Monday - Sunday";
-    document.getElementById("stat-week-title").textContent = "Spent This Week";
+function renderTicker() {
+  const s = S.summary || {};
+  $('tick-today').textContent = fmt(s.daily);
+  $('tick-week').textContent = fmt(s.weekly);
+  $('tick-rolling').textContent = fmt(s.rolling);
+  $('tick-month').textContent = fmt(s.monthly);
+}
+
+function renderHero() {
+  const daily = parseFloat(S.summary?.daily) || 0;
+  $('hero-amount').textContent = fmt(daily);
+  $('hero-date').textContent = new Date().toLocaleDateString('default',
+    { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  const el = $('hero-delta');
+  if (S.digest) {
+    // The server's figure, so the hero and the digest panel always agree.
+    const d = Insights.deltaView(S.digest.pct_vs_avg);
+    el.textContent = d.text;
+    el.className = 'delta ' + d.cls;
+    return;
+  }
+  const total7 = S.past7Rows.reduce((s, r) => s + spendVal(r), 0);
+  const avg7 = total7 / 7;
+  if (avg7 > 0) {
+    const pct = Math.round((daily - avg7) / avg7 * 100);
+    el.textContent = `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs your 7-day average`;
+    el.className = 'delta ' + (pct >= 0 ? 'bad' : 'good');
   } else {
-    document.getElementById("stat-week").textContent = fmt(parseFloat(summary.rolling) || 0);
-    document.getElementById("stat-week-label").textContent = "last 7 days";
-    document.getElementById("stat-week-title").textContent = "Rolling 7 Days";
+    el.textContent = '';
   }
 }
 
-// ── Render spending chart ─────────────────────────────────────────────────────
+// ── Sparkline (past 7 days, hand-drawn canvas) ────────────────────────────────
 
-/**
- * Draws (or redraws) the bar chart that shows spending over time.
- *
- * Steps:
- *   1. Read the "group by" dropdown to know whether to bucket by day/week/month.
- *   2. Use groupByPeriod() to add up amounts per bucket.
- *   3. Destroy the old chart if one exists — Chart.js will leak memory otherwise.
- *   4. Create a new bar chart on the <canvas id="spending-chart"> element.
- */
-function renderSpendingChart(txs) {
-  const period = document.getElementById("group-by").value;
-  const grouped = groupByPeriod(txs, period);
-  const labels = Object.keys(grouped);    // x-axis labels (e.g. ["Jun 1", "Jun 8", ...])
-  const data = Object.values(grouped);    // bar heights in dollars
+function renderSpark() {
+  const c = $('spark');
+  if (!c || !c.parentElement) return;
+  const w = c.parentElement.clientWidth || 280;
+  const h = 96;
+  const dpr = window.devicePixelRatio || 1;
+  c.width = w * dpr;
+  c.height = h * dpr;
+  c.style.width = w + 'px';
+  c.style.height = h + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
 
-  if (spendingChart) spendingChart.destroy();  // tear down the old canvas drawing first
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(localKey(d));
+  }
+  const totals = {};
+  for (const r of S.past7Rows) totals[dkey(r)] = (totals[dkey(r)] || 0) + spendVal(r);
+  const data = days.map(k => Math.max(0, totals[k] || 0));
+  const total = data.reduce((s, v) => s + v, 0);
+  $('spark-caption').textContent = `${fmt(total)} total · ${fmt(total / 7)} a day`;
 
-  const ctx = document.getElementById("spending-chart").getContext("2d");
-  spendingChart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [{
-        label: "Spent",
-        data,
-        backgroundColor: "rgba(143, 172, 216, 0.8)",
-        borderColor: "rgb(143, 172, 216)",
-        borderWidth: 1,
-        borderRadius: 4,
-      }]
-    },
+  const max = Math.max(...data, 1);
+  const px = 8, py = 10;
+  const X = i => px + i * (w - px * 2) / 6;
+  const Y = v => h - py - (v / max) * (h - py * 2);
+  const accent = cssVar('--accent');
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.beginPath();
+  ctx.moveTo(X(0), h - py);
+  data.forEach((v, i) => ctx.lineTo(X(i), Y(v)));
+  ctx.lineTo(X(6), h - py);
+  ctx.closePath();
+  ctx.globalAlpha = 0.15;
+  ctx.fillStyle = accent;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+  data.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(X(6), Y(data[6]), 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.fill();
+}
+
+// ── Insights strip ────────────────────────────────────────────────────────────
+
+function renderInsights() {
+  const rows = S.monthRows.filter(r => kindOf(r) === 'spend' || kindOf(r) === 'refund');
+  const total = rows.reduce((s, r) => s + spendVal(r), 0);
+  $('ins-avg').textContent = fmt(total / new Date().getDate());
+
+  const byDay = {};
+  for (const r of rows) byDay[dkey(r)] = (byDay[dkey(r)] || 0) + spendVal(r);
+  const peak = Object.entries(byDay).sort((a, b) => b[1] - a[1])[0];
+  $('ins-peak').textContent = peak ? fmt(peak[1]) : '—';
+  $('ins-peak-sub').textContent = peak
+    ? new Date(peak[0] + 'T00:00:00').toLocaleDateString('default', { month: 'long', day: 'numeric' })
+    : 'no entries yet';
+
+  const byPlace = {};
+  for (const r of rows) byPlace[r.place || '—'] = (byPlace[r.place || '—'] || 0) + spendVal(r);
+  const top = Object.entries(byPlace).sort((a, b) => b[1] - a[1])[0];
+  $('ins-top').textContent = top ? top[0] : '—';
+  $('ins-top-sub').textContent = top ? fmt(top[1]) + ' this month' : 'no entries yet';
+
+  $('ins-count').textContent = S.monthRows.length;
+}
+
+// ── Main chart (mirrors whatever the ledger shows) ────────────────────────────
+
+let chart = null;
+
+// Buckets ledger rows by day, week, or month — granularity picked automatically
+// from how long a span the rows cover.
+function bucketRows(rows) {
+  const keys = [...new Set(rows.map(dkey))].filter(Boolean).sort();
+  if (!keys.length) return { labels: [], data: [], note: '' };
+  const span = (new Date(keys[keys.length - 1]) - new Date(keys[0])) / 864e5;
+  const mode = span > 180 ? 'month' : span > 42 ? 'week' : 'day';
+
+  const map = new Map();
+  for (const r of rows) {
+    if (spendVal(r) === 0) continue;
+    const k0 = dkey(r);
+    if (!k0) continue;
+    const d = new Date(k0 + 'T00:00:00');
+    let k, label;
+    if (mode === 'month') {
+      k = k0.slice(0, 7);
+      label = d.toLocaleString('default', { month: 'short', year: '2-digit' });
+    } else if (mode === 'week') {
+      const s = new Date(d);
+      s.setDate(d.getDate() - d.getDay());
+      k = localKey(s);
+      label = 'wk ' + s.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+    } else {
+      k = k0;
+      label = d.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+    }
+    if (!map.has(k)) map.set(k, { label, total: 0 });
+    map.get(k).total += spendVal(r);
+  }
+  const entries = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return {
+    labels: entries.map(e => e[1].label),
+    data: entries.map(e => e[1].total),
+    note: 'by ' + mode,
+  };
+}
+
+function renderChart() {
+  if (typeof Chart === 'undefined') return;
+  Chart.defaults.font.family = FONT;
+  const { labels, data, note } = bucketRows(S.rows);
+  $('chart-note').textContent = note;
+  if (chart) chart.destroy();
+  const ink = cssVar('--ink-soft');
+  const line = cssVar('--line');
+  const accent = cssVar('--accent');
+  chart = new Chart($('main-chart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: accent, borderRadius: 3, maxBarThickness: 38 }] },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: ctx => " " + fmt(ctx.raw) } }  // format tooltip as "$X.XX"
+        tooltip: { callbacks: { label: c => ' ' + fmt(c.raw) } },
       },
       scales: {
-        x: { grid: { display: false } },
-        y: { ticks: { callback: v => "$" + v }, grid: { color: "rgb(214, 206, 195)" } }
-      }
-    }
-  });
-}
-
-// ── Render merchant donut ─────────────────────────────────────────────────────
-
-/**
- * Draws (or redraws) the doughnut chart that shows the top 6 merchants by spending.
- *
- * Steps:
- *   1. Use groupByMerchant() to total up each merchant.
- *   2. Sort merchants from highest to lowest spend, then keep only the top 6.
- *   3. Destroy the old chart if one exists.
- *   4. Draw a doughnut chart with a fixed 6-color palette.
- */
-function renderMerchantChart(txs) {
-  const grouped = groupByMerchant(txs);
-  // Sort descending by total, take top 6
-  const sorted = Object.entries(grouped).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const labels = sorted.map(e => e[0]);   // merchant names
-  const data = sorted.map(e => e[1]);     // dollar totals
-  const palette = ["#6c63ff","#34d399","#f87171","#fbbf24","#38bdf8","#a78bfa"];
-
-  if (merchantChart) merchantChart.destroy();
-
-  const ctx = document.getElementById("merchant-chart").getContext("2d");
-  merchantChart = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      labels,
-      datasets: [{ data, backgroundColor: palette, borderWidth: 2, borderColor: "rgb(255, 252, 248)" }]
+        x: { grid: { display: false }, ticks: { color: ink } },
+        y: { ticks: { color: ink, callback: v => '$' + v }, grid: { color: line } },
+      },
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "62%",   // how big the hole in the middle is (higher % = bigger hole)
-      plugins: {
-        legend: { position: "bottom", labels: { boxWidth: 10, padding: 12, font: { size: 11 } } },
-        tooltip: { callbacks: { label: ctx => " " + fmt(ctx.raw) } }
-      }
-    }
   });
 }
 
-// ── Render today's transactions table ─────────────────────────────────────────
+// ── Heatmap calendar (this month) ─────────────────────────────────────────────
 
-/**
- * Fills in the "Today" transactions table at the bottom of the page.
- *
- * Always uses ALL transactions (not the filtered list) so the today section
- * isn't accidentally hidden by a date-range filter.
- *
- * If there are no transactions today it shows a friendly "No transactions today." message.
- * Otherwise it builds one <tr> row per transaction with merchant, category pill, and amount.
- */
-function renderTodayTable() {
-  const today = new Date().toISOString().slice(0, 10);  // "YYYY-MM-DD"
-  const todayTxs = TRANSACTIONS.filter(t => t.transaction_datetime.slice(0, 10) === today);
-  const tbody = document.getElementById("tx-body");
-  const todayLabel = new Date().toLocaleDateString("default", { weekday: "long", month: "long", day: "numeric" });
+function renderHeatmap() {
+  const now = new Date();
+  $('heatmap-title').textContent = now.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-  document.getElementById("today-date-label").textContent = todayLabel;
-  // Show the running total only if there are transactions; otherwise leave blank
-  document.getElementById("today-tx-total").textContent =
-    todayTxs.length ? fmt(todayTxs.reduce((s, t) => s + t.amount, 0)) : "";
+  const totals = {};
+  for (const r of S.monthRows) totals[dkey(r)] = (totals[dkey(r)] || 0) + spendVal(r);
+  const max = Math.max(0, ...Object.values(totals));
 
-  if (!todayTxs.length) {
-    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No transactions today.</div></td></tr>`;
+  const y = now.getFullYear(), m = now.getMonth();
+  const firstDow = new Date(y, m, 1).getDay();
+  const dim = new Date(y, m + 1, 0).getDate();
+
+  let html = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span class="hm-dow">${d}</span>`).join('');
+  for (let i = 0; i < firstDow; i++) html += '<span class="hm-blank"></span>';
+  for (let day = 1; day <= dim; day++) {
+    const d = new Date(y, m, day);
+    const total = totals[localKey(d)] || 0;
+    const pct = max > 0 ? Math.round(8 + (total / max) * 72) : 0;
+    const style = total > 0 ? ` style="background:color-mix(in srgb, var(--accent) ${pct}%, transparent)"` : '';
+    const cls = 'hm-cell' + (total <= 0 ? ' hm-zero' : '') + (day === now.getDate() ? ' hm-today' : '');
+    const label = d.toLocaleDateString('default', { month: 'long', day: 'numeric' });
+    html += `<button class="${cls}"${style} data-mdy="${mdy(d)}" data-label="${label}"` +
+      ` title="${label} — ${fmt(total)}">${day}</button>`;
+  }
+  $('heatmap').innerHTML = html;
+}
+
+$('heatmap').addEventListener('click', e => {
+  const cell = e.target.closest('.hm-cell');
+  if (cell) openDay(cell.dataset.mdy, cell.dataset.label);
+});
+
+// ── Daily digest ──────────────────────────────────────────────────────────────
+
+// Fetched together with the rest of the page data so the hero amount and its
+// delta always come from the same moment. Failure (e.g. an older backend
+// without /insights) returns null and the page works without the digest.
+async function fetchDigest() {
+  try {
+    const [today, history] = await Promise.all([API.insightsToday(), API.insightsHistory(15)]);
+    return { today, history };
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+}
+
+function renderDigest(digest) {
+  S.digest = digest ? digest.today : null;
+  if (!digest) {
+    $('digest').hidden = true;
+    return;
+  }
+  try {
+    const past = (Array.isArray(digest.history) ? digest.history : []).filter(d => d.day !== digest.today.day);
+    $('digest-today').innerHTML = Insights.todayHtml(digest.today);
+    $('digest-note').textContent = Insights.todayView(digest.today).title;
+    $('digest-history').innerHTML = Insights.historyHtml(past);
+    $('digest').hidden = false;
+  } catch (err) {
+    // A malformed digest must not take the rest of the page down with it.
+    console.error(err);
+    S.digest = null;
+    $('digest').hidden = true;
+  }
+}
+
+// Opens one day in the ledger (used by the heatmap and the digest's past days).
+function openDay(mdyValue, label) {
+  $('ledger-search').value = '';
+  setPresetActive(null);
+  loadViewSafe({ mode: 'date', mdy: mdyValue, label });
+  $('ledger').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('digest-history').addEventListener('click', e => {
+  const row = e.target.closest('.dg-day');
+  if (row) openDay(row.dataset.mdy, row.dataset.label);
+});
+
+// ── Merchant leaderboard (this month) ─────────────────────────────────────────
+
+function renderLeaderboard() {
+  const byPlace = {};
+  for (const r of S.monthRows) {
+    const k = kindOf(r);
+    if (k === 'deposit' || k === 'payment') continue;
+    const p = r.place || '—';
+    byPlace[p] = byPlace[p] || { total: 0, count: 0 };
+    byPlace[p].total += spendVal(r);
+    byPlace[p].count++;
+  }
+  const top = Object.entries(byPlace).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
+  if (!top.length) {
+    $('leaderboard').innerHTML = '<div class="muted-note">No entries yet this month.</div>';
+    return;
+  }
+  const max = top[0][1].total || 1;
+  $('leaderboard').innerHTML = top.map(([name, v], i) => `
+    <button class="lb-row" data-merchant="${esc(name)}">
+      <span class="lb-rank">${i + 1}</span>
+      <span class="lb-name">${esc(name)}</span>
+      <span class="lb-meta">${v.count}×</span>
+      <span class="lb-total">${fmt(v.total)}</span>
+      <span class="lb-bar" style="width:${Math.max(4, v.total / max * 100)}%"></span>
+    </button>`).join('');
+}
+
+$('leaderboard').addEventListener('click', e => {
+  const row = e.target.closest('.lb-row');
+  if (!row) return;
+  $('ledger-search').value = row.dataset.merchant;
+  setPresetActive(null);
+  loadViewSafe({ mode: 'merchant', q: row.dataset.merchant });
+  $('ledger').scrollIntoView({ behavior: 'smooth' });
+});
+
+// ── Ledger views ──────────────────────────────────────────────────────────────
+
+function viewLabel(v) {
+  const now = new Date();
+  switch (v.mode) {
+    case 'month':    return now.toLocaleString('default', { month: 'long', year: 'numeric' });
+    case 'today':    return 'Today';
+    case 'week':     return 'This week';
+    case 'past7':    return 'Past seven days';
+    case 'all':      return 'Everything, newest first';
+    case 'merchant': return `Merchant — “${v.q}”`;
+    case 'price':    return `Between ${fmt(v.min)} and ${fmt(v.max)}`;
+    case 'range':    return `${v.start} → ${v.end}`;
+    case 'date':     return v.label || v.mdy;
+  }
+}
+
+let loadSeq = 0;
+
+async function loadView(view) {
+  S.view = view;
+  const seq = ++loadSeq;
+  let rows;
+  try {
+    switch (view.mode) {
+      case 'all':      rows = await API.all(S.offset, S.limit); break;
+      case 'today':    rows = await API.byDate(mdy(new Date())); break;
+      case 'week':     rows = await API.weekly(); break;
+      case 'past7':    rows = await API.past7(); break;
+      case 'month':    rows = await API.month(); break;
+      case 'range':    rows = await API.range(view.start, view.end); break;
+      case 'merchant': rows = await API.merchant(view.q); break;
+      case 'price':    rows = await API.priceRange(view.min, view.max); break;
+      case 'date':     rows = await API.byDate(view.mdy); break;
+    }
+  } catch (err) {
+    if (seq !== loadSeq) return;   // a newer view superseded this one; its error no longer matters
+    throw err;
+  }
+  if (seq !== loadSeq) return;   // a newer view was requested while this one loaded
+  S.hasMore = view.mode === 'all' && (rows || []).length === S.limit;
+  S.rows = (rows || []).slice().sort((a, b) =>
+    (b.transaction_datetime || '').localeCompare(a.transaction_datetime || ''));
+  $('ledger-label').textContent = viewLabel(view);
+  renderLedger();
+  renderChart();
+}
+
+async function loadViewSafe(view) {
+  if (isLocked()) return;
+  try {
+    await loadView(view);
+  } catch (err) {
+    console.error(err);
+    if (!isRejectedToken(err)) toast('Could not load entries: ' + err.message, 'error');
+  }
+}
+
+function renderLedger() {
+  const tb = $('ledger-body');
+  const rows = S.rows;
+  $('ledger-count').textContent = rows.length + (rows.length === 1 ? ' entry' : ' entries');
+
+  const pager = $('pager');
+  if (S.view.mode === 'all') {
+    pager.hidden = false;
+    $('pg-label').textContent = rows.length ? `${S.offset + 1}–${S.offset + rows.length}` : '—';
+    $('pg-prev').disabled = S.offset === 0;
+    $('pg-next').disabled = !S.hasMore;
+  } else {
+    pager.hidden = true;
+  }
+
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="4"><div class="empty">Nothing here — the ledger is clean.</div></td></tr>`;
     return;
   }
 
-  tbody.innerHTML = todayTxs.map(t => `
-    <tr data-id="${t.transaction_id}">
-      <td class="tx-merchant">${t.place}</td>
-      <td>${categoryPill(t.category)}</td>
-      <td class="tx-amount">${fmt(t.amount)}</td>
-    </tr>
-  `).join("");
-}
-
-// ── Render all ────────────────────────────────────────────────────────────────
-
-/**
- * Master re-render: calls every individual render function in the right order,
- * then updates the date-range label above the chart to reflect what's shown.
- *
- * Call this any time the data or filters change and you want the whole page to update.
- */
-async function render() {
-  await renderCards();
-  renderSpendingChart(filtered);
-  renderMerchantChart(filtered);
-  renderTodayTable();
-
-  // Build a human-readable range label like "2025-01-01 → 2025-06-05" or "All time"
-  const from = document.getElementById("date-from").value;
-  const to = document.getElementById("date-to").value;
-  const label = from && to ? `${from} → ${to}` : from ? `From ${from}` : to ? `To ${to}` : "All time";
-  document.getElementById("chart-range-label").textContent = label;
-}
-
-// ── Filter logic ──────────────────────────────────────────────────────────────
-
-/**
- * Reads the current filter inputs and rebuilds the `filtered` array, then re-renders everything.
- *
- * The three filters work like AND conditions — a transaction must pass ALL of them to be included:
- *   - date-from  → exclude anything before this date
- *   - date-to    → exclude anything after this date
- *   - merchant-search → exclude anything whose merchant name doesn't contain the search text
- */
-function applyFilters() {
-  const from = document.getElementById("date-from").value;
-  const to = document.getElementById("date-to").value;
-  const query = document.getElementById("merchant-search").value.trim().toLowerCase();
-
-  filtered = TRANSACTIONS.filter(t => {
-    if (from && t.date < from) return false;   // too early
-    if (to && t.date > to) return false;       // too late
-    if (query && !t.merchant.toLowerCase().includes(query)) return false;  // wrong merchant
-    return true;
-  });
-
-  render();
-}
-
-// ── Modal ─────────────────────────────────────────────────────────────────────
-
-const overlay = document.getElementById("modal-overlay");
-
-/**
- * Opens the "Add Transaction" modal dialog.
- *
- * Pre-fills the date field with today so the user doesn't have to type it,
- * clears any leftover values from the last time the form was used,
- * adds the "open" CSS class which makes the overlay visible,
- * and moves keyboard focus to the merchant field so you can start typing immediately.
- */
-function openModal() {
-  editingTx = null;
-  document.querySelector(".modal-header h2").textContent = "Add Transaction";
-  document.querySelector("#add-tx-form button[type=submit]").textContent = "Add Transaction";
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("tx-date").value = today;
-  document.getElementById("tx-merchant").value = "";
-  document.getElementById("tx-amount").value = "";
-  document.getElementById("tx-category").value = "Groceries";
-  overlay.classList.add("open");
-  document.getElementById("tx-merchant").focus();
-}
-
-function openEditModal(tx) {
-  editingTx = tx;
-  document.querySelector(".modal-header h2").textContent = "Edit Transaction";
-  document.querySelector("#add-tx-form button[type=submit]").textContent = "Save Changes";
-  document.getElementById("tx-date").value = tx.date || tx.transaction_datetime.slice(0, 10);
-  document.getElementById("tx-merchant").value = tx.place || "";
-  document.getElementById("tx-amount").value = tx.amount;
-  document.getElementById("tx-category").value = tx.category;
-  overlay.classList.add("open");
-  document.getElementById("tx-merchant").focus();
-}
-
-function closeModal() { overlay.classList.remove("open"); }
-
-// Wire up every way a user might open or close the modal
-document.getElementById("add-tx-btn").addEventListener("click", openModal);
-document.getElementById("modal-close").addEventListener("click", closeModal);
-document.getElementById("modal-cancel").addEventListener("click", closeModal);
-overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });  // click outside = close
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); }); // Esc key = close
-
-/**
- * Handles the "Add Transaction" form submission.
- *
- * 1. Prevents the default browser form-submit (which would reload the page).
- * 2. Reads and validates all four fields — bails silently if anything is missing or invalid.
- * 3. Pushes the new transaction to the front of TRANSACTIONS, then re-sorts by date descending
- *    so the list stays in order even if the user picked a past date.
- * 4. Closes the modal and re-applies filters so the new transaction shows up immediately.
- */
-document.getElementById("add-tx-form").addEventListener("submit", async e => {
-  e.preventDefault();
-  const date     = document.getElementById("tx-date").value;
-  const merchant = document.getElementById("tx-merchant").value.trim();
-  const category = document.getElementById("tx-category").value;
-  const amount   = parseFloat(document.getElementById("tx-amount").value);
-
-  if (!date || !merchant || isNaN(amount) || amount <= 0) return;
-
-  if (editingTx) {
-    const updated = await editTransaction({ date, place: merchant, category, amount }, editingTx.transaction_id);
-    const idx = TRANSACTIONS.findIndex(t => t.transaction_id === editingTx.transaction_id);
-    if (idx !== -1) TRANSACTIONS[idx] = { ...TRANSACTIONS[idx], ...updated };
-    TRANSACTIONS.sort((a, b) => (b.date || b.transaction_datetime).localeCompare(a.date || a.transaction_datetime));
-  } else {
-    TRANSACTIONS.unshift({ date, merchant, category, amount });
-    TRANSACTIONS.sort((a, b) => b.date.localeCompare(a.date));
+  // Group rows by day (rows are already sorted newest-first) with a subtotal per day.
+  const groups = new Map();
+  for (const r of rows) {
+    const k = dkey(r);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
   }
 
-  closeModal();
-  applyFilters();
+  let html = '';
+  for (const [day, list] of groups) {
+    const subtotal = list.reduce((s, r) => s + spendVal(r), 0);
+    const label = new Date(day + 'T00:00:00').toLocaleDateString('default',
+      { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    html += `<tr class="day-row"><td colspan="3">${label}</td><td class="day-sum">${fmt(subtotal)}</td></tr>`;
+    html += list.map(r => {
+      const k = kindOf(r);
+      const moneyIn = k === 'deposit' || k === 'refund';
+      return `
+      <tr class="lrow${k === 'payment' ? ' lrow--muted' : ''}" data-id="${r.transaction_id}">
+        <td class="l-time">${timeLabel(r)}</td>
+        <td class="l-place">${esc(r.place || '—')}</td>
+        <td>${pill(r.transaction_type)}</td>
+        <td class="l-amt${moneyIn ? ' l-amt--in' : ''}">${moneyIn ? '+' : ''}${fmt(amt(r))}</td>
+      </tr>`;
+    }).join('');
+  }
+  tb.innerHTML = html;
+}
+
+// ── Ledger controls ───────────────────────────────────────────────────────────
+
+function setPresetActive(name) {
+  document.querySelectorAll('[data-preset]').forEach(b =>
+    b.classList.toggle('active', !!name && b.dataset.preset === name));
+}
+
+document.querySelectorAll('[data-preset]').forEach(btn => btn.addEventListener('click', () => {
+  const p = btn.dataset.preset;
+  S.offset = 0;
+  S.lastPreset = p;
+  $('ledger-search').value = '';
+  setPresetActive(p);
+  loadViewSafe({ mode: p });
+  if (btn.closest('.ticker')) $('ledger').scrollIntoView({ behavior: 'smooth' });
+}));
+
+let searchTimer;
+$('ledger-search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  searchTimer = setTimeout(() => {
+    S.offset = 0;
+    if (!q) {
+      setPresetActive(S.lastPreset);
+      loadViewSafe({ mode: S.lastPreset });
+    } else {
+      setPresetActive(null);
+      loadViewSafe({ mode: 'merchant', q });
+    }
+  }, 350);
 });
 
-document.getElementById("tx-body").addEventListener("click", e => {
-  const row = e.target.closest("tr[data-id]");
+$('price-apply').addEventListener('click', () => {
+  const min = parseFloat($('price-min').value);
+  const max = parseFloat($('price-max').value);
+  if (isNaN(min) || isNaN(max) || max < min) return toast('Enter a valid amount range', 'error');
+  setPresetActive(null);
+  loadViewSafe({ mode: 'price', min, max });
+});
+
+$('range-apply').addEventListener('click', () => {
+  const start = $('range-from').value;
+  const end = $('range-to').value;
+  if (!start || !end || end < start) return toast('Pick a valid date range', 'error');
+  setPresetActive(null);
+  loadViewSafe({ mode: 'range', start, end });
+});
+
+// Move the page offset only if the page actually loads, so a failed request
+// can't leave the label and the next click out of step with the table.
+async function pageTo(offset) {
+  if (isLocked()) return;
+  const previous = S.offset;
+  S.offset = offset;
+  try {
+    await loadView({ mode: 'all' });
+  } catch (err) {
+    S.offset = previous;
+    console.error(err);
+    if (!isRejectedToken(err)) toast('Could not load entries: ' + err.message, 'error');
+  }
+}
+
+$('pg-prev').addEventListener('click', () => pageTo(Math.max(0, S.offset - S.limit)));
+$('pg-next').addEventListener('click', () => pageTo(S.offset + S.limit));
+
+$('export-csv').addEventListener('click', () => {
+  if (!S.rows.length) return toast('Nothing to export', 'error');
+  // A leading = + - @ would run as a formula when opened in a spreadsheet.
+  const q = v => {
+    let s = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+  const lines = [
+    'date,time,merchant,type,amount',
+    ...S.rows.map(r => [
+      dkey(r),
+      (r.transaction_datetime || '').slice(11, 16),
+      q(r.place),
+      q(r.transaction_type),
+      amt(r).toFixed(2),
+    ].join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `rbcheck-${localKey(new Date())}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`Exported ${S.rows.length} entries`);
+});
+
+// ── Quick entry (natural-language parser) ─────────────────────────────────────
+
+/**
+ * Parses free text like “coffee at Blue Bottle $6.75 yesterday” into
+ * { amount, place, date, type }. Heuristics, in order:
+ *   type   — a transaction-type word anywhere (debit/credit/refund/…)
+ *   date   — “today”, “yesterday”, or an M/D[/YYYY] token; defaults to today
+ *   amount — a $-prefixed number, else the last decimal, else the last number
+ *   place  — whatever follows “at/@/from”, else the remaining words
+ */
+function parseQuick(text) {
+  let t = ' ' + text.trim() + ' ';
+  const out = { amount: null, place: '', date: new Date(), type: 'debit' };
+
+  const ty = t.match(/\b(credit|refund|payment|transfer|deposit|debit)\b/i);
+  if (ty) { out.type = ty[1].toLowerCase(); t = t.replace(ty[0], ' '); }
+
+  if (/\byesterday\b/i.test(t)) {
+    out.date.setDate(out.date.getDate() - 1);
+    t = t.replace(/\byesterday\b/i, ' ');
+  } else if (/\btoday\b/i.test(t)) {
+    t = t.replace(/\btoday\b/i, ' ');
+  } else {
+    const dm = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    if (dm) {
+      const year = dm[3] ? (dm[3].length === 2 ? 2000 + +dm[3] : +dm[3]) : new Date().getFullYear();
+      const d = new Date(year, +dm[1] - 1, +dm[2]);
+      if (!isNaN(d)) { out.date = d; t = t.replace(dm[0], ' '); }
+    }
+  }
+
+  const dollar = t.match(/\$\s?(\d+(?:\.\d{1,2})?)/);
+  if (dollar) {
+    out.amount = parseFloat(dollar[1]);
+    t = t.replace(dollar[0], ' ');
+  } else {
+    const decimals = [...t.matchAll(/\b\d+\.\d{1,2}\b/g)];
+    const numbers = decimals.length ? decimals : [...t.matchAll(/\b\d+(?:\.\d+)?\b/g)];
+    if (numbers.length) {
+      const last = numbers[numbers.length - 1];
+      out.amount = parseFloat(last[0]);
+      t = t.slice(0, last.index) + ' ' + t.slice(last.index + last[0].length);
+    }
+  }
+
+  const at = t.match(/\b(?:at|@|from)\s+(.+)/i);
+  let place = at ? at[1] : t;
+  place = place
+    .replace(/\b(spent|paid|bought|got|grabbed|for|on|a|an|the)\b/gi, ' ')
+    .replace(/[^\p{L}\p{N}'&\-. ]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  out.place = place ? titleCase(place) : '';
+  return out;
+}
+
+function renderQaPreview() {
+  const text = $('qa-input').value;
+  const box = $('qa-preview');
+  if (!text.trim()) {
+    box.hidden = true;
+    $('qa-submit').disabled = true;
+    S.qa = null;
+    return;
+  }
+  const p = parseQuick(text);
+  S.qa = p;
+  $('qa-submit').disabled = !(S.canWrite && p.amount > 0 && p.place);
+  box.hidden = false;
+  const chip = (label, val, missing) =>
+    `<span class="chip${missing ? ' chip-missing' : ''}"><b>${label}</b>${esc(val)}</span>`;
+  box.innerHTML =
+    chip('Merchant', p.place || 'who?', !p.place) +
+    chip('Amount', p.amount > 0 ? fmt(p.amount) : 'how much?', !(p.amount > 0)) +
+    chip('Date', p.date.toLocaleDateString('default', { month: 'short', day: 'numeric' }), false) +
+    chip('Type', p.type, false);
+}
+
+$('qa-input').addEventListener('input', renderQaPreview);
+$('qa-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('qa-submit').click(); }
+});
+
+let qaBusy = false;
+
+$('qa-submit').addEventListener('click', async () => {
+  const p = S.qa;
+  if (qaBusy || !S.canWrite || !p || !(p.amount > 0) || !p.place) return;
+  qaBusy = true;
+  $('qa-submit').disabled = true;
+  const now = new Date();
+  const dt = new Date(p.date);
+  if (dt.toDateString() === now.toDateString()) dt.setHours(now.getHours(), now.getMinutes(), 0, 0);
+  else dt.setHours(12, 0, 0, 0);
+  try {
+    // No id: the server assigns one (Date.now() overflows the 32-bit id column).
+    await API.create({
+      amount: p.amount,
+      place: p.place,
+      transaction_datetime: toLocalISO(dt),
+      transaction_type: p.type,
+    });
+    $('qa-input').value = '';
+    renderQaPreview();
+    toast(`Logged ${fmt(p.amount)} at ${p.place}`);
+    refreshAll();
+  } catch (err) {
+    if (!isRejectedToken(err)) toast('Could not save: ' + err.message, 'error');
+  } finally {
+    qaBusy = false;
+    renderQaPreview();   // re-enables the button if the input is still valid
+  }
+});
+
+// ── Edit modal ────────────────────────────────────────────────────────────────
+
+function openEdit(tx) {
+  S.editing = tx;
+  $('ed-title').textContent = `Edit Entry №${tx.transaction_id}`;
+  $('ed-date').value = dkey(tx);
+  $('ed-time').value = (tx.transaction_datetime || '').slice(11, 16);
+  $('ed-place').value = tx.place || '';
+  $('ed-amount').value = amt(tx) || '';
+  $('ed-type').value = tx.transaction_type || '';
+  const seen = [...new Set([...S.monthRows, ...S.rows].map(r => r.transaction_type).filter(Boolean))];
+  $('type-options').innerHTML = seen.map(t => `<option value="${esc(t)}">`).join('');
+  $('ed-overlay').classList.add('open');
+  $('ed-place').focus();
+}
+
+function closeEdit() {
+  $('ed-overlay').classList.remove('open');
+  S.editing = null;
+}
+
+$('ledger-body').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-id]');
   if (!row) return;
-  const tx = TRANSACTIONS.find(t => t.transaction_id === parseInt(row.dataset.id));
-  if (tx) openEditModal(tx);
+  const tx = S.rows.find(r => r.transaction_id === +row.dataset.id);
+  if (!tx) return;
+  if (!S.canWrite) return toast('This token is read-only. Lock and unlock with the write token to edit.', 'error');
+  openEdit(tx);
 });
 
-// ── Filter events ─────────────────────────────────────────────────────────────
+$('ed-close').addEventListener('click', closeEdit);
+$('ed-cancel').addEventListener('click', closeEdit);
+$('ed-overlay').addEventListener('click', e => { if (e.target === $('ed-overlay')) closeEdit(); });
 
-// "Apply" button manually triggers the filter
-document.getElementById("apply-filters").addEventListener("click", applyFilters);
-
-// "Clear" button wipes all three filter inputs, resets to all transactions, and re-renders
-document.getElementById("clear-filters").addEventListener("click", () => {
-  document.getElementById("date-from").value = "";
-  document.getElementById("date-to").value = "";
-  document.getElementById("merchant-search").value = "";
-  filtered = [...TRANSACTIONS];
-  render();
+$('ed-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!S.editing || !S.canWrite) return;
+  const date = $('ed-date').value;
+  const time = $('ed-time').value || '12:00';
+  const amount = parseFloat($('ed-amount').value);
+  const place = $('ed-place').value.trim();
+  if (!date || !place || isNaN(amount) || amount <= 0) return;
+  try {
+    await API.update(S.editing.transaction_id, {
+      amount,
+      place,
+      transaction_datetime: `${date}T${time}:00`,
+      transaction_type: $('ed-type').value.trim() || S.editing.transaction_type || 'debit',
+    });
+    closeEdit();
+    toast('Entry updated');
+    refreshAll();
+  } catch (err) {
+    if (!isRejectedToken(err)) toast('Could not save: ' + err.message, 'error');
+  }
 });
 
-// Live search: re-filter on every keystroke in the merchant search box
-document.getElementById("merchant-search").addEventListener("input", applyFilters);
-// Changing the "group by" dropdown immediately redraws the chart with the new bucketing
-document.getElementById("group-by").addEventListener("change", applyFilters);
+// ── Keyboard shortcuts & resize ───────────────────────────────────────────────
 
-// ── Week card toggle ──────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (isLocked()) return;   // no shortcuts reach the page behind the unlock screen
+  if (e.key === 'Escape') return closeEdit();
+  const tag = (document.activeElement || {}).tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if (e.key === '/') { e.preventDefault(); $('ledger-search').focus(); }
+  if (e.key === 'n') { e.preventDefault(); $('qa-input').focus(); }
+});
 
-// Clicking the "Week" card toggles between fixed-week and rolling-7-days mode,
-// then re-renders just the cards (no need to touch the charts)
-document.getElementById("card-week").addEventListener("click", () => {
-  weekCardMode = weekCardMode === 'fixed' ? 'rolling' : 'fixed';
-  renderCards();
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderSpark, 150);
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-/**
- * Entry point — runs once when the page loads.
- *
- * Fetches all transactions from the server via searchTransactions(),
- * stores them in TRANSACTIONS, copies them into `filtered`,
- * and kicks off the first full render.
- *
- * Wrapped in try/catch so a network error doesn't silently crash the page —
- * it logs to the console instead.
- */
-async function init(){
-  try{
-    TRANSACTIONS = await getTransactions(); //fetch from server
-    filtered = [...TRANSACTIONS];
-    render();
-  } catch(err) {
-    console.error('Failed to load transactions:', err);
+let refreshSeq = 0;
+
+async function refreshAll() {
+  try {
+    const seq = ++refreshSeq;
+    const [summary, monthRows, p7, digest] = await Promise.all([API.summary(), API.month(), API.past7(), fetchDigest()]);
+    if (seq !== refreshSeq) return;   // a newer refresh (e.g. two quick entries) is already on its way
+    S.summary = summary;
+    S.digest = digest ? digest.today : null;
+    S.monthRows = monthRows || [];
+    S.past7Rows = p7 || [];
+    renderDigest(digest);   // before the heavier panels so one of them failing can't leave it stale
+    renderTicker();
+    renderHero();
+    renderSpark();
+    renderInsights();
+    renderHeatmap();
+    renderLeaderboard();
+    await loadView(S.view);
+  } catch (err) {
+    console.error(err);
+    if (isRejectedToken(err)) return;   // the unlock prompt is already explaining it
+    toast(err.message || 'Could not reach the RBCheck server', 'error');
   }
 }
 
-init();
+// ── Unlock screen ─────────────────────────────────────────────────────────────
+
+// A 401 re-opens the prompt itself (see API.onUnauthorized), so callers skip their own toast.
+const isRejectedToken = err => err instanceof Auth.AuthError && err.status === 401;
+
+function showUnlock(message = '') {
+  const alreadyOpen = $('unlock-overlay').classList.contains('open');
+  $('unlock-error').textContent = message;
+  $('unlock-overlay').classList.add('open');
+  // While locked nothing behind the overlay may be reachable by keyboard, screen
+  // reader or copy: the page content is made inert and any open editor is closed.
+  const page = document.querySelector('.sheet');
+  page.inert = true;
+  page.setAttribute('aria-hidden', 'true');   // for browsers without `inert`
+  closeEdit();
+  clearTimeout(searchTimer);   // a pending search must not fire a request while locked
+  if (!alreadyOpen) $('unlock-token').value = '';   // several rejected requests must not clear what is being typed
+  $('unlock-token').focus();   // also puts focus back after a failed attempt disabled the button
+  $('unlock-token').select();
+}
+
+function hideUnlock() {
+  $('unlock-overlay').classList.remove('open');
+  document.querySelector('.sheet').inert = false;
+  document.querySelector('.sheet').removeAttribute('aria-hidden');
+  $('unlock-token').value = '';   // don't leave the secret in the page
+}
+
+const isLocked = () => $('unlock-overlay').classList.contains('open');
+
+// Shows what the stored token allows, and switches the editing controls to match.
+function applyAccess() {
+  $('access-badge').textContent = Auth.accessLabel(S.canWrite);
+  $('access-badge').hidden = false;
+  $('lock-btn').hidden = false;
+  const input = $('qa-input');
+  input.disabled = !S.canWrite;
+  input.placeholder = S.canWrite
+    ? input.dataset.placeholder
+    : 'Read-only token: unlock with the write token to add entries';
+  renderQaPreview();
+}
+
+// Checks the stored token against the server, then loads the page. An invalid
+// token re-opens the prompt (via onUnauthorized); an unreachable server keeps it
+// open with a message, so nothing sensitive is ever shown before this succeeds.
+let entering = false;
+
+async function enter() {
+  if (entering) return;   // a double submit must not run everything twice
+  entering = true;
+  $('unlock-submit').disabled = true;
+  try {
+    S.canWrite = await API.probeWrite();
+  } catch (err) {
+    // A rejected token has already re-opened the prompt. Anything else (server down,
+    // an error status) keeps the token for this page and offers a retry.
+    if (!isRejectedToken(err)) {
+      showUnlock(`Could not check your access (${err.message}). Press Unlock to try again.`);
+    }
+    return;
+  } finally {
+    entering = false;
+    $('unlock-submit').disabled = false;
+  }
+  API.token.set(API.token.get());   // the token works: remember it on this device
+  hideUnlock();
+  applyAccess();
+  refreshAll();
+}
+
+API.onUnauthorized(() => {
+  S.canWrite = false;
+  showUnlock('That token was not accepted. Paste the read or write token and try again.');
+});
+
+$('unlock-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (entering) return;   // a check is already running; don't swap the token under it
+  // Empty input retries with the token already held for this page (after a server error).
+  const token = Auth.cleanToken($('unlock-token').value) || API.token.get();
+  if (!token) {
+    $('unlock-error').textContent = 'Paste a token first.';
+    $('unlock-token').focus();
+    return;
+  }
+  API.token.set(token, { persist: false });   // saved for good only once the server accepts it
+  enter();
+});
+
+$('lock-btn').addEventListener('click', () => {
+  API.token.clear();
+  location.reload();   // drops everything held in the page
+});
+
+function storedTheme() {
+  try { return localStorage.getItem('rb-theme') || 'light'; } catch { return 'light'; }
+}
+
+(function boot() {
+  $('qa-input').dataset.placeholder = $('qa-input').placeholder;
+  applyTheme(storedTheme(), false);
+  setDateline();
+  setPresetActive('month');
+  if (API.hasToken()) enter();
+  else showUnlock();
+})();

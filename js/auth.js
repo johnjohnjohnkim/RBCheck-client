@@ -1,70 +1,57 @@
-// Where the API lives, and the login token every request needs.
-// Load this before api.js / api-alt.js on every page.
+// Token handling, kept free of the DOM and of fetch so it can be unit tested in
+// Node (`node --test`). In the browser this defines the global `Auth`.
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.Auth = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
 
-// Pages served from this machine talk to a local API; everywhere else, production.
-const API_BASE = ['localhost', '127.0.0.1'].includes(location.hostname)
-  ? 'http://localhost:8000'
-  : 'https://api.gwanwoo.dev';
+  const KEY = 'rbcheck-token';
 
-const Auth = (() => {
-  const KEY = 'rbcheck.token';
-  const onLoginPage = location.pathname.endsWith('login.html');
-
-  // Storage can be unavailable (private windows, blocked site data).
-  function token() {
-    try { return localStorage.getItem(KEY); } catch { return null; }
-  }
-
-  function goToLogin() {
-    const here = (location.pathname.split('/').pop() || 'index.html') + location.hash;
-    location.replace('login.html?next=' + encodeURIComponent(here));
-  }
-
-  function logout() {
-    try { localStorage.removeItem(KEY); } catch {}
-    goToLogin();
-  }
-
-  /**
-   * fetch() against the API with the login token attached. An expired or
-   * missing login sends the browser to the login page.
-   */
-  async function apiFetch(path, options = {}) {
-    const r = await fetch(API_BASE + path, {
-      ...options,
-      headers: { ...(options.headers || {}), Authorization: `Bearer ${token()}` },
-    });
-    if (r.status === 401) {
-      logout();
-      throw new Error('Signed out');
-    }
-    return r;
-  }
-
-  /** Exchanges email and password for a token and keeps it. */
-  async function login(email, password) {
-    const r = await fetch(API_BASE + '/login', {
-      method: 'POST',
-      body: new URLSearchParams({ username: email, password }),  // the API expects a form, not JSON
-    });
-    if (r.status === 403) throw new Error('Wrong email or password.');
-    if (!r.ok) throw new Error(`Server error: ${r.status}`);
-    const { access_token } = await r.json();
-    try {
-      localStorage.setItem(KEY, access_token);
-    } catch {
-      throw new Error('This browser is blocking storage, so the login can’t be kept.');
+  // 401 = the token is missing or wrong; 403 = it is valid but read-only.
+  class AuthError extends Error {
+    constructor(message, status) {
+      super(message);
+      this.name = 'AuthError';
+      this.status = status;
     }
   }
 
-  /** Where to go after logging in: the page that sent us here, if it is one of ours. */
-  function nextPage() {
-    const next = new URLSearchParams(location.search).get('next') || '';
-    return /^[\w-]+\.html(#[\w-]*)?$/.test(next) ? next : 'index.html';
+  // Remembers the token in `storage` (localStorage in the browser). Storage can be
+  // missing or throw (private windows, blocked site data), so every access is
+  // guarded and the token is also held in memory for the life of the page.
+  function createTokenStore(storage) {
+    let memory = '';
+    return {
+      get() {
+        if (memory) return memory;
+        try { return storage.getItem(KEY) || ''; } catch { return ''; }
+      },
+      // persist:false keeps the token for this page only, until it has been
+      // checked against the server and set again with persist:true.
+      set(token, { persist = true } = {}) {
+        memory = token;
+        if (!persist) return;
+        try { storage.setItem(KEY, token); } catch { /* memory only */ }
+      },
+      clear() {
+        memory = '';
+        try { storage.removeItem(KEY); } catch { /* nothing to clear */ }
+      },
+    };
   }
 
-  // Every other page needs a login before it loads any data.
-  if (!onLoginPage && !token()) goToLogin();
+  // What a person pastes is often padded with spaces or a newline.
+  function cleanToken(raw) {
+    return String(raw ?? '').trim();
+  }
 
-  return { fetch: apiFetch, login, logout, nextPage };
-})();
+  function bearer(token) {
+    return token ? { Authorization: 'Bearer ' + token } : {};
+  }
+
+  function accessLabel(canWrite) {
+    return canWrite ? 'Full access' : 'Read-only';
+  }
+
+  return { AuthError, createTokenStore, cleanToken, bearer, accessLabel };
+});
